@@ -1,0 +1,1010 @@
+// ============================================
+// 獨角獸 - Firestore 服務函數
+// ============================================
+
+import { 
+  collection, 
+  doc, 
+  getDocs, 
+  getDoc, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc,
+  setDoc,
+  query,
+  where,
+  orderBy,
+  Timestamp,
+  serverTimestamp
+} from 'firebase/firestore'
+import { db } from './firebase'
+import type { 
+  Template, 
+  OptionSet, 
+  Submission, 
+  FieldDefinition,
+  OptionRequest,
+  OptionRequestType,
+  OptionRequestPayload
+} from '@/types'
+
+// ============================================
+// Templates（表格定義）
+// ============================================
+
+export async function getTemplates(): Promise<Template[]> {
+  const q = query(collection(db, 'templates'), orderBy('updatedAt', 'desc'))
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as Template[]
+}
+
+export async function getEnabledTemplates(): Promise<Template[]> {
+  // 簡化查詢，只篩選 enabled，排序在前端處理
+  const q = query(
+    collection(db, 'templates'), 
+    where('enabled', '==', true)
+  )
+  const snapshot = await getDocs(q)
+  const templates = snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as Template[]
+  
+  // 在前端排序
+  return templates.sort((a, b) => {
+    if (a.moduleId !== b.moduleId) {
+      return a.moduleId.localeCompare(b.moduleId)
+    }
+    return a.actionId.localeCompare(b.actionId)
+  })
+}
+
+export async function getTemplate(id: string): Promise<Template | null> {
+  const docRef = doc(db, 'templates', id)
+  const docSnap = await getDoc(docRef)
+  if (docSnap.exists()) {
+    return { id: docSnap.id, ...docSnap.data() } as Template
+  }
+  return null
+}
+
+// 🦄 UNICORN: Template version snapshot 結構
+interface TemplateVersionSnapshot {
+  name: string
+  moduleId: string
+  actionId: string
+  enabled: boolean
+  fields: FieldDefinition[]
+  defaults?: Record<string, unknown>
+  createdBy: string
+  createdAt: Timestamp | ReturnType<typeof serverTimestamp>
+}
+
+export async function createTemplate(
+  data: Omit<Template, 'id' | 'createdAt' | 'updatedAt'>,
+  userEmail: string
+): Promise<string> {
+  // 🦄 UNICORN: 新建 template 時 version = 1
+  const version = 1
+  const now = serverTimestamp()
+  
+  // 1. 建立 head document
+  const docRef = await addDoc(collection(db, 'templates'), {
+    ...data,
+    version,
+    createdBy: userEmail,
+    createdAt: now,
+    updatedAt: now
+  })
+  
+  // 2. 🦄 UNICORN: 寫入 version 1 快照到 subcollection
+  // 注意：Firestore 不允許 undefined 值，所以只包含有值的欄位
+  const versionSnapshot: TemplateVersionSnapshot = {
+    name: data.name,
+    moduleId: data.moduleId,
+    actionId: data.actionId,
+    enabled: data.enabled,
+    fields: data.fields || [],
+    createdBy: userEmail,
+    createdAt: now,
+    ...(data.defaults && { defaults: data.defaults })  // 只在有值時加入
+  }
+  
+  await setDoc(
+    doc(db, 'templates', docRef.id, 'versions', String(version)),
+    versionSnapshot
+  )
+  
+  return docRef.id
+}
+
+export async function updateTemplate(
+  id: string, 
+  data: Partial<Omit<Template, 'id' | 'createdAt' | 'createdBy'>>
+): Promise<void> {
+  // 🦄 UNICORN: 先取得目前版本號
+  const currentDoc = await getDoc(doc(db, 'templates', id))
+  if (!currentDoc.exists()) {
+    throw new Error('Template not found')
+  }
+  
+  const currentData = currentDoc.data()
+  const currentVersion = currentData.version || 1
+  const newVersion = currentVersion + 1
+  const now = serverTimestamp()
+  
+  // 1. 更新 head document（含新版本號）
+  const headUpdate = {
+    ...data,
+    version: newVersion,
+    updatedAt: now
+  }
+  await updateDoc(doc(db, 'templates', id), headUpdate)
+  
+  // 2. 🦄 UNICORN: 寫入新版本快照到 subcollection
+  // 合併現有資料與更新資料
+  const mergedData = { ...currentData, ...data }
+  // 注意：Firestore 不允許 undefined 值，所以只包含有值的欄位
+  const versionSnapshot: TemplateVersionSnapshot = {
+    name: mergedData.name,
+    moduleId: mergedData.moduleId,
+    actionId: mergedData.actionId,
+    enabled: mergedData.enabled,
+    fields: mergedData.fields || [],
+    createdBy: currentData.createdBy,
+    createdAt: now,  // 這個版本的建立時間
+    ...(mergedData.defaults && { defaults: mergedData.defaults })  // 只在有值時加入
+  }
+  
+  await setDoc(
+    doc(db, 'templates', id, 'versions', String(newVersion)),
+    versionSnapshot
+  )
+}
+
+// 🦄 UNICORN: 取得特定版本的 template 快照（用於顯示舊 submission）
+export async function getTemplateVersion(
+  templateId: string, 
+  version: number
+): Promise<TemplateVersionSnapshot | null> {
+  const versionDoc = await getDoc(
+    doc(db, 'templates', templateId, 'versions', String(version))
+  )
+  if (versionDoc.exists()) {
+    return versionDoc.data() as TemplateVersionSnapshot
+  }
+  return null
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  const docRef = doc(db, 'templates', id)
+  await deleteDoc(docRef)
+}
+
+// ============================================
+// OptionSets（下拉選項池）
+// ============================================
+
+export async function getOptionSets(): Promise<OptionSet[]> {
+  const q = query(collection(db, 'optionSets'), orderBy('name'))
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as OptionSet[]
+}
+
+export async function getOptionSet(id: string): Promise<OptionSet | null> {
+  const docRef = doc(db, 'optionSets', id)
+  const docSnap = await getDoc(docRef)
+  if (docSnap.exists()) {
+    return { id: docSnap.id, ...docSnap.data() } as OptionSet
+  }
+  return null
+}
+
+export async function createOptionSet(
+  data: Omit<OptionSet, 'id' | 'createdAt' | 'updatedAt'>,
+  userEmail: string
+): Promise<string> {
+  const docRef = await addDoc(collection(db, 'optionSets'), {
+    ...data,
+    createdBy: userEmail,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  })
+  return docRef.id
+}
+
+export async function updateOptionSet(
+  id: string, 
+  data: Partial<Omit<OptionSet, 'id' | 'createdAt' | 'createdBy'>>
+): Promise<void> {
+  const docRef = doc(db, 'optionSets', id)
+  await updateDoc(docRef, {
+    ...data,
+    updatedAt: serverTimestamp()
+  })
+}
+
+export async function deleteOptionSet(id: string): Promise<void> {
+  const docRef = doc(db, 'optionSets', id)
+  await deleteDoc(docRef)
+}
+
+// ============================================
+// Submissions（提交資料）
+// ============================================
+
+export async function getMySubmissions(userEmail: string): Promise<Submission[]> {
+  const q = query(
+    collection(db, 'submissions'),
+    where('createdBy', '==', userEmail),
+    orderBy('createdAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as Submission[]
+}
+
+export async function getSubmission(id: string): Promise<Submission | null> {
+  const docRef = doc(db, 'submissions', id)
+  const docSnap = await getDoc(docRef)
+  if (docSnap.exists()) {
+    return { id: docSnap.id, ...docSnap.data() } as Submission
+  }
+  return null
+}
+
+// 🦄 UNICORN: 計算 _month (YYYY-MM) 用於 period 查詢
+function computeMonth(): string {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  return `${year}-${month}`
+}
+
+export async function createSubmission(
+  data: {
+    templateId: string
+    templateVersion: number                    // 🦄 UNICORN: Freeze template version
+    moduleId: string
+    actionId: string
+    values: Record<string, unknown>
+    labelsSnapshot: Record<string, string>     // 🦄 UNICORN: Preserve labels for display
+    files?: Array<{
+      fieldKey: string                         // 🦄 UNICORN: Link file to field
+      driveFileId: string
+      name: string
+      mimeType: string
+      size: number
+      webViewLink?: string
+    }>
+    supersedesSubmissionId?: string            // 🦄 UNICORN: 更正鏈（可選）
+  },
+  userEmail: string
+): Promise<string> {
+  // 從 values 中提取日期範圍欄位（如果有）
+  let _dateStart: string | null = null
+  let _dateEnd: string | null = null
+  
+  // 遍歷 values 找日期欄位
+  for (const [key, value] of Object.entries(data.values)) {
+    if (key.toLowerCase().includes('start') && typeof value === 'string') {
+      _dateStart = value
+    }
+    if (key.toLowerCase().includes('end') && typeof value === 'string') {
+      _dateEnd = value
+    }
+  }
+
+  // 🦄 UNICORN: Submission 是不可變事件，一次寫入所有欄位
+  const docRef = await addDoc(collection(db, 'submissions'), {
+    templateId: data.templateId,
+    templateVersion: data.templateVersion,     // 🦄 UNICORN: Store frozen version
+    moduleId: data.moduleId,
+    actionId: data.actionId,
+    createdBy: userEmail,
+    status: 'ACTIVE',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    values: data.values,
+    labelsSnapshot: data.labelsSnapshot,       // 🦄 UNICORN: Store frozen labels
+    files: data.files || [],
+    _dateStart,
+    _dateEnd,
+    _month: computeMonth(),                    // 🦄 UNICORN: Period key for queries (§9)
+    _refIds: [],
+    // 🦄 UNICORN: 更正鏈（如果這是一個更正）
+    ...(data.supersedesSubmissionId && { supersedesSubmissionId: data.supersedesSubmissionId })
+  })
+  return docRef.id
+}
+
+// 🦄 UNICORN: 使用預先產生的 ID 建立 submission（用於先上傳檔案再提交的流程）
+export async function createSubmissionWithId(
+  submissionId: string,
+  data: {
+    templateId: string
+    templateVersion: number
+    moduleId: string
+    actionId: string
+    values: Record<string, unknown>
+    labelsSnapshot: Record<string, string>
+    files?: Array<{
+      fieldKey: string
+      driveFileId: string
+      name: string
+      mimeType: string
+      size: number
+      webViewLink?: string
+    }>
+    supersedesSubmissionId?: string
+  },
+  userEmail: string
+): Promise<void> {
+  // 從 values 中提取日期範圍欄位
+  let _dateStart: string | null = null
+  let _dateEnd: string | null = null
+  
+  for (const [key, value] of Object.entries(data.values)) {
+    if (key.toLowerCase().includes('start') && typeof value === 'string') {
+      _dateStart = value
+    }
+    if (key.toLowerCase().includes('end') && typeof value === 'string') {
+      _dateEnd = value
+    }
+  }
+
+  // 🦄 UNICORN: 使用指定的 ID 建立文件
+  await setDoc(doc(db, 'submissions', submissionId), {
+    templateId: data.templateId,
+    templateVersion: data.templateVersion,
+    moduleId: data.moduleId,
+    actionId: data.actionId,
+    createdBy: userEmail,
+    status: 'ACTIVE',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    values: data.values,
+    labelsSnapshot: data.labelsSnapshot,
+    files: data.files || [],
+    _dateStart,
+    _dateEnd,
+    _month: computeMonth(),
+    _refIds: [],
+    ...(data.supersedesSubmissionId && { supersedesSubmissionId: data.supersedesSubmissionId })
+  })
+}
+
+// 🦄 UNICORN: 產生新的 submission ID（用於先上傳檔案）
+export function generateSubmissionId(): string {
+  return doc(collection(db, 'submissions')).id
+}
+
+// 🦄 UNICORN: 取消 Submission（呼叫 Cloud Function）
+// Submission 不可變，狀態轉換必須透過 Cloud Function
+const CANCEL_SUBMISSION_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net/cancelSubmission'
+
+export async function cancelSubmission(id: string): Promise<void> {
+  // 取得 Firebase ID Token
+  const { auth } = await import('./firebase')
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('請先登入')
+  }
+  const idToken = await user.getIdToken()
+  
+  // 🦄 UNICORN: 呼叫 Cloud Function 執行狀態轉換
+  const response = await fetch(CANCEL_SUBMISSION_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ submissionId: id })
+  })
+  
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || '取消失敗')
+  }
+}
+
+// ============================================
+// Leader 專用：查看所有提交
+// ============================================
+
+export async function getAllSubmissions(): Promise<Submission[]> {
+  const q = query(
+    collection(db, 'submissions'),
+    orderBy('createdAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as Submission[]
+}
+
+export async function getSubmissionsByTemplate(templateId: string): Promise<Submission[]> {
+  const q = query(
+    collection(db, 'submissions'),
+    where('templateId', '==', templateId),
+    orderBy('createdAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as Submission[]
+}
+
+// ============================================
+// 🦄 UNICORN: Option Requests（選項變更申請）
+// ============================================
+
+/**
+ * 取得所有選項申請（Admin 用）
+ */
+export async function getAllOptionRequests(): Promise<OptionRequest[]> {
+  const q = query(
+    collection(db, 'optionRequests'),
+    orderBy('requestedAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as OptionRequest[]
+}
+
+/**
+ * 取得待處理的選項申請（Admin 用）
+ */
+export async function getPendingOptionRequests(): Promise<OptionRequest[]> {
+  const q = query(
+    collection(db, 'optionRequests'),
+    where('status', '==', 'pending'),
+    orderBy('requestedAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as OptionRequest[]
+}
+
+/**
+ * 取得我的選項申請（Leader 用）
+ */
+export async function getMyOptionRequests(userEmail: string): Promise<OptionRequest[]> {
+  const q = query(
+    collection(db, 'optionRequests'),
+    where('requestedBy', '==', userEmail),
+    orderBy('requestedAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as OptionRequest[]
+}
+
+/**
+ * 建立選項變更申請
+ */
+export async function createOptionRequest(
+  data: {
+    setId: string
+    setName: string
+    type: OptionRequestType
+    payload: OptionRequestPayload
+  },
+  userEmail: string
+): Promise<string> {
+  const docRef = await addDoc(collection(db, 'optionRequests'), {
+    setId: data.setId,
+    setName: data.setName,
+    type: data.type,
+    payload: data.payload,
+    status: 'pending',
+    requestedAt: serverTimestamp(),
+    requestedBy: userEmail
+  })
+  return docRef.id
+}
+
+/**
+ * 🦄 UNICORN: 處理選項申請（呼叫 Cloud Function）
+ */
+const PROCESS_OPTION_REQUEST_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net/processOptionRequest'
+
+export async function processOptionRequest(
+  requestId: string,
+  action: 'approve' | 'reject',
+  reviewNote?: string
+): Promise<void> {
+  // 取得 Firebase ID Token
+  const { auth } = await import('./firebase')
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('請先登入')
+  }
+  const idToken = await user.getIdToken()
+  
+  const response = await fetch(PROCESS_OPTION_REQUEST_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ requestId, action, reviewNote })
+  })
+  
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || '處理失敗')
+  }
+}
+
+/**
+ * 🦄 UNICORN: 建立選項池（呼叫 Cloud Function）
+ * 首次建立選項池必須透過 Cloud Function
+ */
+const CREATE_OPTION_SET_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net/createOptionSet'
+
+export async function createOptionSetViaFunction(
+  data: {
+    code: string                                    // 🦄 UNICORN: Machine name (immutable)
+    name: string
+    description?: string
+    items?: Array<{ value: string; label: string }>
+  }
+): Promise<string> {
+  // 取得 Firebase ID Token
+  const { auth } = await import('./firebase')
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('請先登入')
+  }
+  const idToken = await user.getIdToken()
+  
+  const response = await fetch(CREATE_OPTION_SET_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    },
+    body: JSON.stringify(data)
+  })
+  
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || '建立失敗')
+  }
+  
+  const result = await response.json()
+  return result.id
+}
+
+/**
+ * 🦄 UNICORN: 為現有選項池添加 code（遷移用）
+ */
+const MIGRATE_OPTION_SET_CODE_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net/migrateOptionSetCode'
+
+export async function migrateOptionSetCode(
+  optionSetId: string,
+  code: string
+): Promise<void> {
+  // 取得 Firebase ID Token
+  const { auth } = await import('./firebase')
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('請先登入')
+  }
+  const idToken = await user.getIdToken()
+  
+  const response = await fetch(MIGRATE_OPTION_SET_CODE_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ optionSetId, code })
+  })
+  
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || '遷移失敗')
+  }
+}
+
+/**
+ * 🦄 UNICORN: 刪除選項池（Admin 專用）
+ */
+const DELETE_OPTION_SET_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net/deleteOptionSet'
+
+export async function deleteOptionSetViaFunction(optionSetId: string): Promise<void> {
+  const { auth } = await import('./firebase')
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('請先登入')
+  }
+  const idToken = await user.getIdToken()
+  
+  const response = await fetch(DELETE_OPTION_SET_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ optionSetId })
+  })
+  
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || '刪除失敗')
+  }
+}
+
+/**
+ * 🦄 UNICORN: 更新選項池（Admin 專用）
+ */
+const UPDATE_OPTION_SET_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net/updateOptionSet'
+
+export async function updateOptionSetViaFunction(
+  optionSetId: string,
+  data: {
+    name?: string
+    description?: string
+    items?: Array<{
+      value: string
+      label: string
+      status?: string
+      createdAt?: string
+      createdBy?: string
+      labelHistory?: Array<{
+        label: string
+        changedAt: string
+        changedBy: string
+        reason?: string
+      }>
+    }>
+  }
+): Promise<void> {
+  const { auth } = await import('./firebase')
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('請先登入')
+  }
+  const idToken = await user.getIdToken()
+  
+  const response = await fetch(UPDATE_OPTION_SET_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ optionSetId, ...data })
+  })
+  
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || '更新失敗')
+  }
+}
+
+/**
+ * 🦄 UNICORN: 批次上傳選項（Admin 專用）
+ * @param mode - 'append' (新增) | 'replace' (取代) | 'merge' (合併)
+ */
+const BATCH_UPLOAD_OPTIONS_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net/batchUploadOptions'
+
+export async function batchUploadOptionsViaFunction(
+  optionSetId: string,
+  csvData: string,
+  mode: 'append' | 'replace' | 'merge' = 'append'
+): Promise<{
+  uploaded: number
+  final: number
+  mode: string
+  warnings?: string[]
+}> {
+  const { auth } = await import('./firebase')
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('請先登入')
+  }
+  const idToken = await user.getIdToken()
+  
+  const response = await fetch(BATCH_UPLOAD_OPTIONS_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ optionSetId, csvData, mode })
+  })
+  
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || '上傳失敗')
+  }
+  
+  const result = await response.json()
+  return result.stats
+}
+
+// ============================================
+// 🦄 UNICORN: Draft System (Sandbox Layer)
+// ============================================
+
+import type { OptionSetDraft, TemplateDraft, DraftStatus } from '@/types'
+
+// ---------- OptionSet Drafts ----------
+
+export async function getMyOptionSetDrafts(userEmail: string): Promise<OptionSetDraft[]> {
+  const q = query(
+    collection(db, 'optionSetDrafts'),
+    where('createdBy', '==', userEmail),
+    orderBy('updatedAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as OptionSetDraft[]
+}
+
+export async function getAllOptionSetDrafts(): Promise<OptionSetDraft[]> {
+  const q = query(
+    collection(db, 'optionSetDrafts'),
+    orderBy('updatedAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as OptionSetDraft[]
+}
+
+export async function getPendingOptionSetDrafts(): Promise<OptionSetDraft[]> {
+  const q = query(
+    collection(db, 'optionSetDrafts'),
+    where('status', '==', 'pending_review'),
+    orderBy('submittedAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as OptionSetDraft[]
+}
+
+export async function getOptionSetDraft(id: string): Promise<OptionSetDraft | null> {
+  const docRef = doc(db, 'optionSetDrafts', id)
+  const docSnap = await getDoc(docRef)
+  if (docSnap.exists()) {
+    return { id: docSnap.id, ...docSnap.data() } as OptionSetDraft
+  }
+  return null
+}
+
+export async function createOptionSetDraft(
+  data: {
+    code: string
+    name: string
+    description?: string
+    items: Array<{ value: string; label: string }>
+  },
+  userEmail: string
+): Promise<string> {
+  const now = serverTimestamp()
+  const docRef = await addDoc(collection(db, 'optionSetDrafts'), {
+    ...data,
+    status: 'draft' as DraftStatus,
+    createdBy: userEmail,
+    createdAt: now,
+    updatedAt: now
+  })
+  return docRef.id
+}
+
+export async function updateOptionSetDraft(
+  id: string,
+  data: Partial<{
+    code: string
+    name: string
+    description: string
+    items: Array<{ value: string; label: string }>
+  }>
+): Promise<void> {
+  const docRef = doc(db, 'optionSetDrafts', id)
+  await updateDoc(docRef, {
+    ...data,
+    updatedAt: serverTimestamp()
+  })
+}
+
+export async function submitOptionSetDraftForReview(id: string): Promise<void> {
+  const docRef = doc(db, 'optionSetDrafts', id)
+  await updateDoc(docRef, {
+    status: 'pending_review' as DraftStatus,
+    submittedAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  })
+}
+
+export async function deleteOptionSetDraft(id: string): Promise<void> {
+  const docRef = doc(db, 'optionSetDrafts', id)
+  await deleteDoc(docRef)
+}
+
+// Review via Cloud Function
+const REVIEW_OPTION_SET_DRAFT_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net/reviewOptionSetDraft'
+
+export async function reviewOptionSetDraft(
+  draftId: string,
+  action: 'approve' | 'reject',
+  reviewNote?: string
+): Promise<void> {
+  const { auth } = await import('./firebase')
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('請先登入')
+  }
+  const idToken = await user.getIdToken()
+  
+  const response = await fetch(REVIEW_OPTION_SET_DRAFT_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ draftId, action, reviewNote })
+  })
+  
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || '審核失敗')
+  }
+}
+
+// ---------- Template Drafts ----------
+
+export async function getMyTemplateDrafts(userEmail: string): Promise<TemplateDraft[]> {
+  const q = query(
+    collection(db, 'templateDrafts'),
+    where('createdBy', '==', userEmail),
+    orderBy('updatedAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as TemplateDraft[]
+}
+
+export async function getAllTemplateDrafts(): Promise<TemplateDraft[]> {
+  const q = query(
+    collection(db, 'templateDrafts'),
+    orderBy('updatedAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as TemplateDraft[]
+}
+
+export async function getPendingTemplateDrafts(): Promise<TemplateDraft[]> {
+  const q = query(
+    collection(db, 'templateDrafts'),
+    where('status', '==', 'pending_review'),
+    orderBy('submittedAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as TemplateDraft[]
+}
+
+export async function getTemplateDraft(id: string): Promise<TemplateDraft | null> {
+  const docRef = doc(db, 'templateDrafts', id)
+  const docSnap = await getDoc(docRef)
+  if (docSnap.exists()) {
+    return { id: docSnap.id, ...docSnap.data() } as TemplateDraft
+  }
+  return null
+}
+
+export async function createTemplateDraft(
+  data: {
+    name: string
+    moduleId: string
+    actionId: string
+    fields: any[]
+    defaults?: Record<string, unknown>
+    usedDraftOptionSetIds?: string[]
+  },
+  userEmail: string
+): Promise<string> {
+  const now = serverTimestamp()
+  const docRef = await addDoc(collection(db, 'templateDrafts'), {
+    ...data,
+    status: 'draft' as DraftStatus,
+    createdBy: userEmail,
+    createdAt: now,
+    updatedAt: now
+  })
+  return docRef.id
+}
+
+export async function updateTemplateDraft(
+  id: string,
+  data: Partial<{
+    name: string
+    moduleId: string
+    actionId: string
+    fields: any[]
+    defaults: Record<string, unknown>
+    usedDraftOptionSetIds: string[]
+  }>
+): Promise<void> {
+  const docRef = doc(db, 'templateDrafts', id)
+  await updateDoc(docRef, {
+    ...data,
+    updatedAt: serverTimestamp()
+  })
+}
+
+export async function submitTemplateDraftForReview(id: string): Promise<void> {
+  const docRef = doc(db, 'templateDrafts', id)
+  await updateDoc(docRef, {
+    status: 'pending_review' as DraftStatus,
+    submittedAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  })
+}
+
+export async function deleteTemplateDraft(id: string): Promise<void> {
+  const docRef = doc(db, 'templateDrafts', id)
+  await deleteDoc(docRef)
+}
+
+// Review via Cloud Function
+const REVIEW_TEMPLATE_DRAFT_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net/reviewTemplateDraft'
+
+export async function reviewTemplateDraft(
+  draftId: string,
+  action: 'approve' | 'reject',
+  reviewNote?: string
+): Promise<void> {
+  const { auth } = await import('./firebase')
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('請先登入')
+  }
+  const idToken = await user.getIdToken()
+  
+  const response = await fetch(REVIEW_TEMPLATE_DRAFT_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    },
+    body: JSON.stringify({ draftId, action, reviewNote })
+  })
+  
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || '審核失敗')
+  }
+}

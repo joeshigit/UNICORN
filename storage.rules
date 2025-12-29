@@ -1,0 +1,21 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // 只有經過驗證且是公司網域的用戶才能存取
+    function isCompanyUser() {
+      return request.auth != null && 
+             request.auth.token.email.matches('.*@dbyv\\.org$');
+    }
+    
+    // uploads 資料夾
+    match /uploads/{allPaths=**} {
+      // 讀取：公司用戶都可以
+      allow read: if isCompanyUser();
+      // 寫入：只允許透過 Cloud Functions（服務帳號）
+      allow write: if false;
+    }
+  }
+}
+
+
+
