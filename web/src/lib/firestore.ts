@@ -28,7 +28,8 @@ import type {
   OptionRequestPayload,
   UserFormStats,
   OptionSetDraft,
-  TemplateDraft
+  TemplateDraft,
+  TemplateSuggestion
 } from '@/types'
 
 // ============================================
@@ -1343,4 +1344,44 @@ export async function updateSubset(
     items: newItems,
     updatedAt: serverTimestamp()
   })
+}
+
+// ============================================
+// Phase 3.3: Template Suggestions
+// ============================================
+
+// Create template suggestion
+export async function createTemplateSuggestion(
+  templateId: string,
+  templateName: string,
+  suggestions: Record<string, string>,
+  generalNotes: string | undefined,
+  suggesterEmail: string
+): Promise<string> {
+  const docRef = await addDoc(collection(db, 'templateSuggestions'), {
+    templateId,
+    templateName,
+    suggesterEmail,
+    suggestions,
+    generalNotes: generalNotes || '',
+    status: 'pending',
+    createdAt: serverTimestamp(),
+    _notifiedAt: null  // UNICORN: Idempotency for email notification
+  })
+  
+  return docRef.id
+}
+
+// Get my template suggestions
+export async function getMyTemplateSuggestions(userEmail: string): Promise<TemplateSuggestion[]> {
+  const q = query(
+    collection(db, 'templateSuggestions'),
+    where('suggesterEmail', '==', userEmail),
+    orderBy('createdAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as TemplateSuggestion[]
 }
