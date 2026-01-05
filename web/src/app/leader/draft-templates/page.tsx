@@ -11,7 +11,8 @@ import {
   getOptionSets,
   getMyOptionSetDrafts
 } from '@/lib/firestore'
-import type { TemplateDraft, DraftStatus, FieldDefinition, OptionSet, OptionSetDraft } from '@/types'
+import type { TemplateDraft, DraftStatus, FieldDefinition, OptionSet, OptionSetDraft, UniversalKey } from '@/types'
+import { UNIVERSAL_KEYS } from '@/types'
 
 const statusConfig: Record<DraftStatus, { label: string; color: string }> = {
   draft: { label: '草稿', color: 'bg-slate-500/20 text-slate-400' },
@@ -199,7 +200,7 @@ export default function LeaderDraftTemplatesPage() {
 
   function addField() {
     setFields([...fields, {
-      key: '',
+      key: '' as UniversalKey,  // Must select from Universal Keys
       type: 'text',
       label: '',
       required: false,
@@ -210,18 +211,6 @@ export default function LeaderDraftTemplatesPage() {
   function updateField(index: number, updates: Partial<FieldDefinition>) {
     const updated = [...fields]
     updated[index] = { ...updated[index], ...updates }
-    
-    // Auto-generate key from label
-    if (updates.label && !updated[index].key) {
-      updated[index].key = updates.label
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9\u4e00-\u9fa5]/g, '_')
-        .replace(/_+/g, '_')
-        .replace(/^_|_$/g, '')
-        .substring(0, 30)
-    }
-    
     setFields(updated)
   }
 
@@ -484,19 +473,24 @@ export default function LeaderDraftTemplatesPage() {
                       {fields.map((field, index) => (
                         <div key={index} className="flex items-center gap-2 p-3 bg-slate-900 rounded-lg">
                           <span className="text-slate-500 text-sm w-6">{index + 1}</span>
+                          <select
+                            value={field.key}
+                            onChange={(e) => updateField(index, { key: e.target.value as UniversalKey })}
+                            className="w-32 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm font-mono"
+                          >
+                            <option value="">選擇 KEY</option>
+                            {Object.entries(UNIVERSAL_KEYS).map(([key, config]) => (
+                              <option key={key} value={key}>
+                                {key}
+                              </option>
+                            ))}
+                          </select>
                           <input
                             type="text"
                             value={field.label}
                             onChange={(e) => updateField(index, { label: e.target.value })}
                             className="flex-1 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm"
-                            placeholder="標籤"
-                          />
-                          <input
-                            type="text"
-                            value={field.key}
-                            onChange={(e) => updateField(index, { key: e.target.value })}
-                            className="w-24 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm font-mono"
-                            placeholder="key"
+                            placeholder="標籤（顯示名稱）"
                           />
                           <select
                             value={field.type}
