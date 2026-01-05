@@ -121,6 +121,13 @@ export interface Template {
   updatedAt: Date | string
   fields: FieldDefinition[]
   defaults?: Record<UniversalKey, unknown>
+  
+  // 🦄 UNICORN: Phase 1 - Form Management
+  description?: string           // Form description
+  accessType?: 'all' | 'whitelist'  // Who can fill this form
+  accessWhitelist?: string[]     // Allowed emails (if accessType is whitelist)
+  managerEmails?: string[]       // Up to 5 managers who can edit this form
+  _createdMonth?: string         // YYYY-MM format for efficient queries (e.g., "2026-01")
 }
 
 // ---------- Reference 欄位值 ----------
@@ -294,6 +301,60 @@ export interface ReferenceOption {
 export type UserRole = 'staff' | 'leader' | 'admin'
 
 // ============================================
+// 🦄 UNICORN: Phase 1 - User Interaction Collections
+// ============================================
+
+// ---------- User form usage statistics (for "most used", "recently used") ----------
+export interface UserFormStats {
+  id?: string
+  userEmail: string
+  templateId: string
+  templateName: string
+  useCount: number
+  lastUsedAt: Date | string
+  isFavorite: boolean
+}
+
+// ---------- Form access requests ----------
+export interface FormAccessRequest {
+  id?: string
+  templateId: string
+  templateName: string
+  requesterEmail: string
+  ownerEmail: string
+  managerEmails: string[]
+  status: 'pending' | 'approved' | 'rejected'
+  requestedAt: Date | string
+  reviewedAt?: Date | string
+  reviewedBy?: string
+  _notifiedAt?: Date | string  // 🦄 UNICORN: Idempotency for email notifications
+}
+
+// ---------- Template suggestions from users ----------
+export interface TemplateSuggestion {
+  id?: string
+  templateId: string
+  templateName: string
+  suggesterEmail: string
+  suggestions: Record<string, string>  // fieldKey -> suggestion text
+  generalNotes?: string
+  status: 'pending' | 'reviewed' | 'implemented'
+  createdAt: Date | string
+  reviewedAt?: Date | string
+  reviewedBy?: string
+  _notifiedAt?: Date | string  // 🦄 UNICORN: Idempotency for email notifications
+}
+
+// ---------- Form name registry (for duplicate prevention) ----------
+export interface FormNameRegistry {
+  id?: string  // normalized name as ID
+  originalName: string
+  templateId: string
+  templateType: 'draft' | 'official'
+  createdAt: Date | string
+}
+
+// ============================================
 // 🦄 UNICORN: Draft System (Sandbox Layer)
 // ============================================
 
@@ -340,4 +401,10 @@ export interface TemplateDraft {
   reviewedBy?: string
   reviewNote?: string
   createdTemplateId?: string
+  
+  // 🦄 UNICORN: Phase 1 - Form Management (same as Template)
+  description?: string
+  accessType?: 'all' | 'whitelist'
+  accessWhitelist?: string[]
+  managerEmails?: string[]
 }
