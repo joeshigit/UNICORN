@@ -26,7 +26,9 @@ import type {
   OptionRequest,
   OptionRequestType,
   OptionRequestPayload,
-  UserFormStats
+  UserFormStats,
+  OptionSetDraft,
+  TemplateDraft
 } from '@/types'
 
 // ============================================
@@ -1161,6 +1163,138 @@ export async function toggleTemplateEnabled(
 ): Promise<void> {
   await updateDoc(doc(db, 'templates', templateId), {
     enabled,
+    updatedAt: serverTimestamp()
+  })
+}
+
+// ============================================
+// Phase 2.4: OptionSet Subset Management
+// ============================================
+
+// Get Master OptionSets only
+export async function getMasterOptionSets(): Promise<OptionSet[]> {
+  const q = query(
+    collection(db, 'optionSets'),
+    where('isMaster', '==', true),
+    orderBy('createdAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as OptionSet[]
+}
+
+// Get Subsets for a specific Master
+export async function getSubsetsForMaster(masterSetId: string): Promise<OptionSet[]> {
+  const q = query(
+    collection(db, 'optionSets'),
+    where('masterSetId', '==', masterSetId),
+    orderBy('createdAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as OptionSet[]
+}
+
+// Create Subset from Master (no approval needed)
+export async function createSubsetFromMaster(
+  masterSetId: string,
+  name: string,
+  selectedValues: string[],
+  createdBy: string
+): Promise<string> {
+  // 1. Get Master OptionSet
+  const masterDoc = await getDoc(doc(db, 'optionSets', masterSetId))
+  if (!masterDoc.exists()) {
+    throw new Error('Master OptionSet 不存在')
+  }
+  
+  const masterData = masterDoc.data() as OptionSet
+  if (!masterData.isMaster) {
+    throw new Error('只能從 Master OptionSet 建立子集')
+  }
+  
+  // 2. Validate all selected values exist in Master
+  const masterValues = masterData.items.map(item => item.value)
+  const invalidValues = selectedValues.filter(v => !masterValues.includes(v))
+  if (invalidValues.length > 0) {
+    throw new Error(`以下值不存在於 Master 中：${invalidValues.join(', ')}`)
+  }
+  
+  // 3. Build subset items (preserve original item structure)
+  const subsetItems = masterData.items
+    .filter(item => selectedValues.includes(item.value))
+    .map((item, index) => ({
+      ...item,
+      sort: index  // Re-index
+    }))
+  
+  // 4. Create new OptionSet
+  const now = serverTimestamp()
+  const docRef = await addDoc(collection(db, 'optionSets'), {
+    code: masterData.code,        // Same Universal KEY
+    name,
+    description: `從「${masterData.name}」建立的子集`,
+    isMaster: false,
+    masterSetId: masterSetId,
+    items: subsetItems,
+    createdBy,
+    createdAt: now,
+    updatedAt: now
+  })
+  
+  return docRef.id
+}
+
+// Update Subset (modify selected items)
+export async function updateSubset(
+  subsetId: string,
+  selectedValues: string[]
+): Promise<void> {
+  // 1. Get Subset
+  const subsetDoc = await getDoc(doc(db, 'optionSets', subsetId))
+  if (!subsetDoc.exists()) {
+    throw new Error('Subset 不存在')
+  }
+  
+  const subsetData = subsetDoc.data() as OptionSet
+  if (subsetData.isMaster) {
+    throw new Error('不能用此函數更新 Master OptionSet')
+  }
+  
+  if (!subsetData.masterSetId) {
+    throw new Error('此 OptionSet 不是 Subset')
+  }
+  
+  // 2. Get Master
+  const masterDoc = await getDoc(doc(db, 'optionSets', subsetData.masterSetId))
+  if (!masterDoc.exists()) {
+    throw new Error('Master OptionSet 不存在')
+  }
+  
+  const masterData = masterDoc.data() as OptionSet
+  
+  // 3. Validate all selected values exist in Master
+  const masterValues = masterData.items.map(item => item.value)
+  const invalidValues = selectedValues.filter(v => !masterValues.includes(v))
+  if (invalidValues.length > 0) {
+    throw new Error(`以下值不存在於 Master 中：${invalidValues.join(', ')}`)
+  }
+  
+  // 4. Build new subset items
+  const newItems = masterData.items
+    .filter(item => selectedValues.includes(item.value))
+    .map((item, index) => ({
+      ...item,
+      sort: index
+    }))
+  
+  // 5. Update Subset
+  await updateDoc(doc(db, 'optionSets', subsetId), {
+    items: newItems,
     updatedAt: serverTimestamp()
   })
 }
