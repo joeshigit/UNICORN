@@ -25,7 +25,8 @@ import type {
   FieldDefinition,
   OptionRequest,
   OptionRequestType,
-  OptionRequestPayload
+  OptionRequestPayload,
+  UserFormStats
 } from '@/types'
 
 // ============================================
@@ -1007,4 +1008,117 @@ export async function reviewTemplateDraft(
     const errorData = await response.json()
     throw new Error(errorData.message || errorData.error || '審核失敗')
   }
+}
+
+// ============================================
+// Phase 2: Leader Dashboard & User Interaction
+// ============================================
+
+// ---------- User Form Stats ----------
+export async function getUserFormStats(userEmail: string): Promise<UserFormStats[]> {
+  const q = query(
+    collection(db, 'userFormStats'),
+    where('userEmail', '==', userEmail),
+    orderBy('lastUsedAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as UserFormStats[]
+}
+
+// ---------- Templates Query Helpers ----------
+
+// Get templates created this month (UNICORN: use _createdMonth period key)
+export async function getTemplatesCreatedThisMonth(): Promise<Template[]> {
+  const currentMonth = new Date().toISOString().slice(0, 7) // "2026-01"
+  const q = query(
+    collection(db, 'templates'),
+    where('_createdMonth', '==', currentMonth),
+    orderBy('createdAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as Template[]
+}
+
+// Get templates managed by user (owner or in managerEmails)
+export async function getMyManagedTemplates(userEmail: string): Promise<Template[]> {
+  // Note: Firestore array-contains only works with single value
+  // We need to query both createdBy and managerEmails separately
+  
+  const [ownedTemplates, managedTemplates] = await Promise.all([
+    // Templates created by user
+    getDocs(query(
+      collection(db, 'templates'),
+      where('createdBy', '==', userEmail),
+      orderBy('updatedAt', 'desc')
+    )),
+    // Templates where user is in managerEmails
+    getDocs(query(
+      collection(db, 'templates'),
+      where('managerEmails', 'array-contains', userEmail),
+      orderBy('updatedAt', 'desc')
+    ))
+  ])
+  
+  // Combine and deduplicate
+  const templateMap = new Map<string, Template>()
+  
+  ownedTemplates.docs.forEach(doc => {
+    templateMap.set(doc.id, { id: doc.id, ...doc.data() } as Template)
+  })
+  
+  managedTemplates.docs.forEach(doc => {
+    if (!templateMap.has(doc.id)) {
+      templateMap.set(doc.id, { id: doc.id, ...doc.data() } as Template)
+    }
+  })
+  
+  return Array.from(templateMap.values())
+}
+
+// Get recent submissions for user's managed templates
+export async function getRecentSubmissionsForMyTemplates(
+  templateIds: string[],
+  limit: number = 10
+): Promise<Submission[]> {
+  if (templateIds.length === 0) return []
+  
+  // Firestore 'in' query limited to 10 items
+  // If more than 10 templates, we need to batch
+  const batchSize = 10
+  const batches: Promise<Submission[]>[] = []
+  
+  for (let i = 0; i < templateIds.length; i += batchSize) {
+    const batch = templateIds.slice(i, i + batchSize)
+    const q = query(
+      collection(db, 'submissions'),
+      where('_templateId', 'in', batch),
+      orderBy('_submittedAt', 'desc')
+    )
+    batches.push(
+      getDocs(q).then(snapshot => 
+        snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Submission[]
+      )
+    )
+  }
+  
+  const allResults = await Promise.all(batches)
+  const combined = allResults.flat()
+  
+  // Sort by submittedAt and limit
+  return combined
+    .sort((a, b) => {
+      const aTime = a._submittedAt instanceof Date ? a._submittedAt.getTime() : new Date(a._submittedAt as string).getTime()
+      const bTime = b._submittedAt instanceof Date ? b._submittedAt.getTime() : new Date(b._submittedAt as string).getTime()
+      return bTime - aTime
+    })
+    .slice(0, limit)
 }

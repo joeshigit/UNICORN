@@ -1,9 +1,20 @@
 'use client'
 
+// Phase 2.2: Dashboard Upgrade with usage stats and recent forms
+
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/components/auth/AuthProvider'
-import { getTemplates, getOptionSets, getAllSubmissions } from '@/lib/firestore'
+import { 
+  getTemplates, 
+  getOptionSets, 
+  getAllSubmissions,
+  getUserFormStats,
+  getTemplatesCreatedThisMonth,
+  getMyManagedTemplates,
+  getRecentSubmissionsForMyTemplates
+} from '@/lib/firestore'
 import Link from 'next/link'
+import type { Template, UserFormStats, Submission } from '@/types'
 
 export default function LeaderDashboard() {
   const { user } = useAuth()
@@ -14,29 +25,39 @@ export default function LeaderDashboard() {
     submissions: 0,
     todaySubmissions: 0
   })
+  const [myFormStats, setMyFormStats] = useState<UserFormStats[]>([])
+  const [thisMonthTemplates, setThisMonthTemplates] = useState<Template[]>([])
+  const [recentSubmissions, setRecentSubmissions] = useState<Submission[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    loadStats()
-  }, [])
+    if (user?.email) {
+      loadDashboardData()
+    }
+  }, [user])
 
-  const loadStats = async () => {
+  const loadDashboardData = async () => {
+    if (!user?.email) return
+    
     try {
       setLoading(true)
-      const [templates, optionSets, submissions] = await Promise.all([
+      
+      // Load basic stats
+      const [templates, optionSets, submissions, userStats] = await Promise.all([
         getTemplates(),
         getOptionSets(),
-        getAllSubmissions()
+        getAllSubmissions(),
+        getUserFormStats(user.email)
       ])
       
-      // 計算今日提交
+      // Calculate today submissions
       const today = new Date()
       today.setHours(0, 0, 0, 0)
       const todaySubmissions = submissions.filter(s => {
-        const createdAt = s.createdAt instanceof Date 
-          ? s.createdAt 
-          : new Date(s.createdAt as string)
-        return createdAt >= today
+        const submittedAt = s._submittedAt instanceof Date 
+          ? s._submittedAt 
+          : new Date(s._submittedAt as string)
+        return submittedAt >= today
       })
 
       setStats({
@@ -46,8 +67,24 @@ export default function LeaderDashboard() {
         submissions: submissions.length,
         todaySubmissions: todaySubmissions.length
       })
+      
+      // Phase 2.2: Load user-specific data
+      setMyFormStats(userStats)
+      
+      // Load templates created this month (UNICORN: using _createdMonth)
+      const monthTemplates = await getTemplatesCreatedThisMonth()
+      setThisMonthTemplates(monthTemplates)
+      
+      // Load recent submissions for my managed templates
+      const managedTemplates = await getMyManagedTemplates(user.email)
+      const templateIds = managedTemplates.map(t => t.id!).filter(Boolean)
+      if (templateIds.length > 0) {
+        const recent = await getRecentSubmissionsForMyTemplates(templateIds, 5)
+        setRecentSubmissions(recent)
+      }
+      
     } catch (error) {
-      console.error('載入統計失敗:', error)
+      console.error('載入總覽資料失敗:', error)
     } finally {
       setLoading(false)
     }
@@ -64,7 +101,7 @@ export default function LeaderDashboard() {
         </svg>
       ),
       color: 'purple',
-      href: '/leader/templates'
+      href: '/leader/my-templates'
     },
     {
       title: '選項池',
@@ -76,7 +113,7 @@ export default function LeaderDashboard() {
         </svg>
       ),
       color: 'blue',
-      href: '/leader/option-sets'
+      href: '/leader/design-forms'
     },
     {
       title: '總提交數',
@@ -95,7 +132,24 @@ export default function LeaderDashboard() {
   const colorClasses: Record<string, { bg: string; text: string; icon: string }> = {
     purple: { bg: 'bg-purple-50', text: 'text-purple-700', icon: 'text-purple-500' },
     blue: { bg: 'bg-blue-50', text: 'text-blue-700', icon: 'text-blue-500' },
-    green: { bg: 'bg-green-50', text: 'text-green-700', icon: 'text-green-500' }
+    green: { bg: 'bg-green-50', text: 'text-green-700', icon: 'text-green-500' },
+    amber: { bg: 'bg-amber-50', text: 'text-amber-700', icon: 'text-amber-500' }
+  }
+
+  // Format relative time
+  const formatRelativeTime = (date: Date | string) => {
+    const d = date instanceof Date ? date : new Date(date as string)
+    const now = new Date()
+    const diffMs = now.getTime() - d.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffMs / 86400000)
+    
+    if (diffMins < 1) return '剛剛'
+    if (diffMins < 60) return `${diffMins} 分鐘前`
+    if (diffHours < 24) return `${diffHours} 小時前`
+    if (diffDays < 7) return `${diffDays} 天前`
+    return d.toLocaleDateString('zh-TW')
   }
 
   return (
@@ -141,37 +195,142 @@ export default function LeaderDashboard() {
         })}
       </div>
 
-      {/* 快速操作 */}
+      {/* Phase 2.2: New Sections */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Most Used Forms */}
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <span>📊</span>
+            <span>常用表格</span>
+          </h2>
+          {loading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+              ))}
+            </div>
+          ) : myFormStats.length === 0 ? (
+            <p className="text-gray-400 text-sm">尚無使用記錄</p>
+          ) : (
+            <div className="space-y-2">
+              {myFormStats.slice(0, 5).map(stat => (
+                <Link
+                  key={stat.id}
+                  href={`/staff/submit/${stat.templateId}`}
+                  className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors border border-transparent hover:border-purple-200"
+                >
+                  <div className="flex-1">
+                    <p className="font-medium text-gray-900">{stat.templateName}</p>
+                    <p className="text-xs text-gray-500">
+                      使用 {stat.useCount} 次 · {formatRelativeTime(stat.lastUsedAt)}
+                    </p>
+                  </div>
+                  {stat.isFavorite && (
+                    <span className="text-amber-500">⭐</span>
+                  )}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Forms Created This Month */}
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <span>🆕</span>
+            <span>本月新表格</span>
+          </h2>
+          {loading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+              ))}
+            </div>
+          ) : thisMonthTemplates.length === 0 ? (
+            <p className="text-gray-400 text-sm">本月尚未建立新表格</p>
+          ) : (
+            <div className="space-y-2">
+              {thisMonthTemplates.slice(0, 5).map(template => (
+                <Link
+                  key={template.id}
+                  href={template.createdBy === user?.email 
+                    ? `/leader/my-templates` 
+                    : `/staff/submit/${template.id}`}
+                  className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors border border-transparent hover:border-purple-200"
+                >
+                  <div className="flex-1">
+                    <p className="font-medium text-gray-900">{template.name}</p>
+                    <p className="text-xs text-gray-500">
+                      {template.moduleId} · {template.actionId}
+                    </p>
+                  </div>
+                  {template.createdBy === user?.email && (
+                    <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
+                      我建立的
+                    </span>
+                  )}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Recently Submitted (My Forms) */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+          <span>📝</span>
+          <span>最近提交（我的表格）</span>
+        </h2>
+        {loading ? (
+          <div className="space-y-2">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+            ))}
+          </div>
+        ) : recentSubmissions.length === 0 ? (
+          <p className="text-gray-400 text-sm">尚無提交記錄</p>
+        ) : (
+          <div className="space-y-2">
+            {recentSubmissions.map(submission => (
+              <div
+                key={submission.id}
+                className="flex items-center justify-between p-3 rounded-lg border border-gray-100"
+              >
+                <div className="flex-1">
+                  <p className="font-medium text-gray-900">
+                    {submission._templateModule} · {submission._templateAction}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {submission._submitterEmail} · {formatRelativeTime(submission._submittedAt)}
+                  </p>
+                </div>
+                <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
+                  {submission._status}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 快速操作 - Phase 2.2: Updated */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">快速操作</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Link
-            href="/leader/templates"
+            href="/leader/my-templates"
             className="flex items-center gap-3 p-4 bg-purple-50 rounded-xl hover:bg-purple-100 transition-colors"
           >
             <div className="w-10 h-10 bg-purple-500 rounded-lg flex items-center justify-center text-white">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </div>
             <div>
-              <p className="font-medium text-gray-900">新增表格</p>
-              <p className="text-xs text-gray-500">建立資料收集表格</p>
-            </div>
-          </Link>
-          
-          <Link
-            href="/leader/option-sets"
-            className="flex items-center gap-3 p-4 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors"
-          >
-            <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center text-white">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-medium text-gray-900">管理選項池</p>
-              <p className="text-xs text-gray-500">新增下拉選單選項</p>
+              <p className="font-medium text-gray-900">管理表格</p>
+              <p className="text-xs text-gray-500">管理我的表格</p>
             </div>
           </Link>
           
@@ -180,6 +339,21 @@ export default function LeaderDashboard() {
             className="flex items-center gap-3 p-4 bg-green-50 rounded-xl hover:bg-green-100 transition-colors"
           >
             <div className="w-10 h-10 bg-green-500 rounded-lg flex items-center justify-center text-white">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <div>
+              <p className="font-medium text-gray-900">查看資料</p>
+              <p className="text-xs text-gray-500">查看表格數據</p>
+            </div>
+          </Link>
+          
+          <Link
+            href="/leader/exports"
+            className="flex items-center gap-3 p-4 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors"
+          >
+            <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center text-white">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
@@ -191,18 +365,17 @@ export default function LeaderDashboard() {
           </Link>
           
           <Link
-            href="/staff"
+            href="/leader/design-forms"
             className="flex items-center gap-3 p-4 bg-amber-50 rounded-xl hover:bg-amber-100 transition-colors"
           >
             <div className="w-10 h-10 bg-amber-500 rounded-lg flex items-center justify-center text-white">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
             </div>
             <div>
-              <p className="font-medium text-gray-900">員工視角</p>
-              <p className="text-xs text-gray-500">查看 Staff 介面</p>
+              <p className="font-medium text-gray-900">建立新表格</p>
+              <p className="text-xs text-gray-500">設計新的資料收集表格</p>
             </div>
           </Link>
         </div>
