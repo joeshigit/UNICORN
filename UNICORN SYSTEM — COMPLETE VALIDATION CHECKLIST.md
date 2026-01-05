@@ -17,6 +17,15 @@ UNICORN 系統的根本目標是建立一個**標準化資料收集系統**。
 	•	表格使用統一的分類（module）和動作（action）名稱？
 	•	選項池、分類、動作有治理機制，不會隨意新增重複項目？
 
+### 目標 1.5：Master/Subset OptionSet 設計
+	•	同一個 Universal KEY 可以有多個 OptionSet（子集）？
+	•	Master OptionSet 標記 `isMaster: true`？
+	•	Subset OptionSet 的 `masterSetId` 指向 Master？
+	•	Subset 的每個 `value` 必須存在於 Master 中？
+	•	新增選項只能在 Master 中進行？
+	•	不管用哪個 Subset 提交，VALUE 都是標準化的？
+	•	跨表格查詢不受 Subset 影響？
+
 ### 目標 2：Universal KEY 設計（扁平化資料結構）
 
 | 概念 | 說明 | 範例 |

@@ -227,6 +227,8 @@ optionSets/{optionSetId}
 | `code` | string | 🦄 對應 Universal Key（如 `school`） |
 | `name` | string | 選項池顯示名稱（如「學校」） |
 | `description` | string | 說明 |
+| `isMaster` | boolean | 🦄 是否為完整清單（Master） |
+| `masterSetId` | string | 🦄 子集指向 Master 的 ID |
 | `createdBy` | string | Leader email |
 | `createdAt` | timestamp | 建立時間 |
 | `updatedAt` | timestamp | 更新時間 |
@@ -240,6 +242,43 @@ optionSets/{optionSetId}
   { "value": "培正中學", "label": "培正中學", "status": "active", "sort": 1 }
 ]
 ```
+
+#### 🦄 Master/Subset 設計
+
+同一個 Universal KEY 可以有多個 OptionSet：
+
+```javascript
+// Master（完整清單）
+{
+  code: "school",
+  name: "所有學校",
+  isMaster: true,
+  items: [/* 100 個學校 */]
+}
+
+// Subset A（中學子集）
+{
+  code: "school",              // 同一個 KEY
+  name: "中學",
+  isMaster: false,
+  masterSetId: "school_master",
+  items: [/* 50 個中學 */]
+}
+
+// Subset B（教會小學子集）
+{
+  code: "school",              // 同一個 KEY
+  name: "教會小學",
+  isMaster: false,
+  masterSetId: "school_master",
+  items: [/* 20 個教會小學 */]
+}
+```
+
+**規則**：
+- 子集的 `value` 必須存在於 Master 中
+- 新增選項只能在 Master 中進行
+- 不管用哪個子集提交，`school: "粵華中學"` 的 VALUE 都是標準化的
 
 ---
 

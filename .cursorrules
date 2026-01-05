@@ -110,6 +110,54 @@ UNICORN 採用 **Universal KEY** 設計：
 3. **LABEL 靈活**：不同表格可用不同 LABEL，不影響資料查詢
 4. **VALUE 標準化**：透過 optionSet 強制統一，避免「粵華」「粵華中學」不一致
 
+#### Master/Subset OptionSet 設計
+
+同一個 Universal KEY 可以有多個 OptionSet（子集）：
+
+```javascript
+// Master OptionSet（完整清單，100 個學校）
+{
+  code: "school",
+  name: "所有學校",
+  isMaster: true,
+  items: [/* 100 個學校 */]
+}
+
+// Subset A（中學，50 個）
+{
+  code: "school",           // 同一個 KEY
+  name: "中學",
+  isMaster: false,
+  masterSetId: "school_master",
+  items: [/* 50 個中學，必須存在於 Master */]
+}
+
+// Subset B（教會小學，20 個）
+{
+  code: "school",           // 同一個 KEY
+  name: "教會小學",
+  isMaster: false,
+  masterSetId: "school_master",
+  items: [/* 20 個教會小學，必須存在於 Master */]
+}
+```
+
+**規則**：
+- 多個 OptionSet 可以共用同一個 `code`（Universal KEY）
+- `isMaster: true` = 完整清單，`isMaster: false` = 子集
+- 子集的 `masterSetId` 指向 Master 的 ID
+- 子集的每個 `value` 必須存在於 Master 中
+- 新增選項只能在 Master 中進行
+- 不管用哪個子集，submission 存的 VALUE 都是標準化的
+
+**查詢不受影響**：
+```javascript
+// 不管是用「中學」還是「教會小學」子集提交
+// 查詢都一樣有效
+db.collection('submissions')
+  .where('school', '==', '粵華中學')
+```
+
 ### 目標 3：單一資料池（Single Data Pool）
 
 所有表格的提交都存在同一個 `submissions` collection：

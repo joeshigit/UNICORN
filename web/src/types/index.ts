@@ -238,6 +238,12 @@ export interface OptionSet {
   createdAt: Date | string
   updatedAt: Date | string
   items: OptionItem[]
+  
+  // 🦄 UNICORN: Master/Subset OptionSet 設計
+  // 多個 OptionSet 可以共用同一個 Universal KEY（code）
+  // Master 包含完整選項，Subset 只包含部分選項
+  isMaster?: boolean               // true = 完整清單，false/undefined = 子集
+  masterSetId?: string             // 子集指向 Master 的 ID
 }
 
 // ---------- Option Request（選項變更申請）----------
@@ -311,6 +317,10 @@ export interface OptionSetDraft {
   reviewedBy?: string
   reviewNote?: string
   createdOptionSetId?: string
+  
+  // 🦄 UNICORN: Master/Subset 設計
+  isMaster?: boolean               // true = 完整清單，false = 子集
+  masterSetId?: string             // 子集指向 Master 的 ID
 }
 
 export interface TemplateDraft {
