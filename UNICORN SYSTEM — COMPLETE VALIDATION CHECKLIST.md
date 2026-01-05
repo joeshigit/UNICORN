@@ -17,11 +17,14 @@ UNICORN 系統的根本目標是建立一個**標準化資料收集系統**。
 	•	表格使用統一的分類（module）和動作（action）名稱？
 	•	選項池、分類、動作有治理機制，不會隨意新增重複項目？
 
-### 目標 2：扁平化資料結構
-	•	submission 的用戶資料欄位直接存在文件頂層？
-	•	系統欄位使用 `_` 前綴區分？
+### 目標 2：扁平化資料結構（Hybrid 分區扁平）
+	•	submission 採用 Hybrid 分區扁平設計？
+	•	系統 Metadata 使用 `_` 前綴（如 `_templateId`, `_submittedMonth`）？
+	•	標準化查詢欄位使用 `_query` 前綴（如 `_queryDepartment`）？
+	•	用戶資料欄位直接存在頂層，無前綴？
 	•	不使用 `data: { field: value }` 巢狀結構？
-	•	可以直接用 `.where('fieldName', '==', value)` 查詢？
+	•	`_query*` 欄位由 Cloud Function 在寫入時計算？
+	•	跨表查詢使用 `_query*` 欄位，而非用戶自定義欄位？
 
 ### 目標 3：單一資料池
 	•	所有表格的提交都存在同一個 `submissions` collection？
