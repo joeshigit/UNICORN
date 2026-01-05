@@ -45,6 +45,13 @@ export default function LeaderDraftTemplatesPage() {
   const [moduleId, setModuleId] = useState('')
   const [actionId, setActionId] = useState('')
   const [fields, setFields] = useState<FieldDefinition[]>([])
+  
+  // Phase 2.5: New form fields
+  const [description, setDescription] = useState('')
+  const [accessType, setAccessType] = useState<'all' | 'whitelist'>('all')
+  const [accessWhitelist, setAccessWhitelist] = useState('')
+  const [managerEmails, setManagerEmails] = useState('')
+  const [showSaveModal, setShowSaveModal] = useState(false)
 
   useEffect(() => {
     if (user?.email) {
@@ -75,8 +82,13 @@ export default function LeaderDraftTemplatesPage() {
     setModuleId('')
     setActionId('')
     setFields([])
+    setDescription('')
+    setAccessType('all')
+    setAccessWhitelist('')
+    setManagerEmails('')
     setShowCreate(false)
     setEditingId(null)
+    setShowSaveModal(false)
   }
 
   function startEdit(draft: TemplateDraft) {
@@ -85,23 +97,51 @@ export default function LeaderDraftTemplatesPage() {
     setModuleId(draft.moduleId)
     setActionId(draft.actionId)
     setFields(draft.fields || [])
+    setDescription(draft.description || '')
+    setAccessType(draft.accessType || 'all')
+    setAccessWhitelist((draft.accessWhitelist || []).join(', '))
+    setManagerEmails((draft.managerEmails || []).join(', '))
     setShowCreate(true)
   }
 
-  async function handleSave() {
-    if (!user?.email) return
+  // Phase 2.5: Validate and prepare save
+  function handleSaveClick() {
     if (!name.trim() || !moduleId.trim() || !actionId.trim()) {
-      alert('請填寫名稱、模組和動作')
+      alert('請填寫表格名稱、分類和動作')
       return
     }
+    
+    // Phase 2.5: Validate manager emails
+    const managers = managerEmails.split(',').map(e => e.trim()).filter(Boolean)
+    if (managers.length > 5) {
+      alert('最多只能設定 5 位管理者')
+      return
+    }
+    
+    // Show save modal
+    setShowSaveModal(true)
+  }
+
+  async function handleSave(startUsing: boolean) {
+    if (!user?.email) return
 
     setSaving(true)
     try {
+      // Parse emails
+      const whitelist = accessType === 'whitelist'
+        ? accessWhitelist.split(',').map(e => e.trim()).filter(Boolean)
+        : []
+      const managers = managerEmails.split(',').map(e => e.trim()).filter(Boolean)
+      
       const data = {
         name: name.trim(),
         moduleId: moduleId.trim(),
         actionId: actionId.trim(),
-        fields: fields.filter(f => f.key && f.label)
+        fields: fields.filter(f => f.key && f.label),
+        description: description.trim() || undefined,
+        accessType,
+        accessWhitelist: whitelist.length > 0 ? whitelist : undefined,
+        managerEmails: managers.length > 0 ? managers : undefined
       }
 
       if (editingId) {
@@ -112,11 +152,19 @@ export default function LeaderDraftTemplatesPage() {
 
       await loadAll()
       resetForm()
+      
+      if (startUsing) {
+        alert('草稿已儲存！可以前往「我的表格」啟用此表格。')
+      } else {
+        alert('草稿已儲存，可稍後繼續修改')
+      }
+      
     } catch (error: any) {
       console.error('儲存失敗:', error)
       alert('儲存失敗: ' + error.message)
     } finally {
       setSaving(false)
+      setShowSaveModal(false)
     }
   }
 
@@ -355,6 +403,67 @@ export default function LeaderDraftTemplatesPage() {
                   </div>
                 </div>
                 
+                {/* Phase 2.5: New Fields */}
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">描述</label>
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    rows={3}
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none"
+                    placeholder="說明此表格的用途..."
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">誰可填寫此表</label>
+                  <div className="space-y-3">
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={accessType === 'all'}
+                          onChange={() => setAccessType('all')}
+                          className="text-purple-600"
+                        />
+                        <span className="text-sm text-slate-300">所有人</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          checked={accessType === 'whitelist'}
+                          onChange={() => setAccessType('whitelist')}
+                          className="text-purple-600"
+                        />
+                        <span className="text-sm text-slate-300">白名單</span>
+                      </label>
+                    </div>
+                    {accessType === 'whitelist' && (
+                      <input
+                        type="text"
+                        value={accessWhitelist}
+                        onChange={(e) => setAccessWhitelist(e.target.value)}
+                        placeholder="email1@org.com, email2@org.com"
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none"
+                      />
+                    )}
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="block text-sm text-slate-400 mb-2">表格管理者（最多 5 位）</label>
+                  <input
+                    type="text"
+                    value={managerEmails}
+                    onChange={(e) => setManagerEmails(e.target.value)}
+                    placeholder="manager1@org.com, manager2@org.com"
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">
+                    管理者可以像擁有者一樣編輯此表格
+                  </p>
+                </div>
+                
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="block text-sm text-slate-400">欄位</label>
@@ -442,14 +551,58 @@ export default function LeaderDraftTemplatesPage() {
                   取消
                 </button>
                 <button
-                  onClick={handleSave}
+                  onClick={handleSaveClick}
                   disabled={saving || !name.trim() || !moduleId.trim() || !actionId.trim()}
                   className="px-4 py-2 bg-amber-500 text-slate-900 rounded-lg hover:bg-amber-400 transition-colors font-medium disabled:opacity-50"
                 >
-                  {saving ? '儲存中...' : '儲存'}
+                  儲存
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Phase 2.5: Save Flow Modal */}
+      {showSaveModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl border border-slate-700 max-w-md w-full p-6">
+            <h3 className="text-xl font-bold text-white mb-4">
+              儲存草稿
+            </h3>
+            <p className="text-slate-300 mb-6">
+              草稿已準備好儲存。你希望：
+            </p>
+            
+            <div className="space-y-3">
+              <button
+                onClick={() => handleSave(true)}
+                disabled={saving}
+                className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors font-medium"
+              >
+                {saving ? '儲存中...' : '立即使用'}
+              </button>
+              <button
+                onClick={() => handleSave(false)}
+                disabled={saving}
+                className="w-full px-6 py-3 bg-slate-700 text-white rounded-lg hover:bg-slate-600 disabled:opacity-50 transition-colors"
+              >
+                {saving ? '儲存中...' : '儲存供稍後修改'}
+              </button>
+              <button
+                onClick={() => setShowSaveModal(false)}
+                disabled={saving}
+                className="w-full px-6 py-3 bg-slate-900 text-slate-300 rounded-lg hover:bg-slate-800 disabled:opacity-50 transition-colors"
+              >
+                取消
+              </button>
+            </div>
+            
+            {saving && (
+              <div className="mt-4 text-center text-sm text-slate-400">
+                正在儲存草稿...
+              </div>
+            )}
           </div>
         </div>
       )}
