@@ -1246,28 +1246,35 @@ export async function getSubsetsForMaster(masterSetId: string): Promise<OptionSe
   })) as OptionSet[]
 }
 
-// Migration: Mark all existing OptionSets as Master
+// Migration: Mark all existing OptionSets as Master (via Cloud Function)
+const MIGRATE_TO_MASTER_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net/migrateOptionSetsToMaster'
+
 export async function migrateOptionSetsToMaster(): Promise<{ updated: number; errors: string[] }> {
-  const allSets = await getOptionSets()
-  let updated = 0
-  const errors: string[] = []
+  const { auth } = await import('./firebase')
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('請先登入')
+  }
+  const idToken = await user.getIdToken()
   
-  for (const optionSet of allSets) {
-    // Skip if already has isMaster field
-    if (optionSet.isMaster !== undefined) continue
-    
-    try {
-      await updateDoc(doc(db, 'optionSets', optionSet.id!), {
-        isMaster: true,  // Mark as Master
-        updatedAt: serverTimestamp()
-      })
-      updated++
-    } catch (error) {
-      errors.push(`${optionSet.name}: ${error instanceof Error ? error.message : '未知錯誤'}`)
+  const response = await fetch(MIGRATE_TO_MASTER_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
     }
+  })
+  
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || '遷移失敗')
   }
   
-  return { updated, errors }
+  const result = await response.json()
+  return {
+    updated: result.updated,
+    errors: result.errors || []
+  }
 }
 
 // Create Subset from Master (no approval needed)

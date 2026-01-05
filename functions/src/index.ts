@@ -1718,3 +1718,89 @@ export const reviewTemplateDraft = functions
       }
     })
   })
+
+// ============================================
+// 🦄 Master/Subset Migration
+// ============================================
+
+export const migrateOptionSetsToMaster = functions.region('asia-east1').https.onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    if (req.method !== 'POST') {
+      res.status(405).json({ error: 'Method not allowed' })
+      return
+    }
+
+    try {
+      // Verify authentication and admin
+      const user = await verifyIdToken(req)
+      if (!user) {
+        res.status(401).json({ error: 'Unauthorized' })
+        return
+      }
+
+      // Check if user is admin (same check as in rules)
+      const admins = ['joeshi@dbyv.org']
+      if (!admins.includes(user.email || '')) {
+        res.status(403).json({ error: 'Forbidden: Admin only' })
+        return
+      }
+
+      const db = admin.firestore()
+      
+      // Get all OptionSets
+      const snapshot = await db.collection('optionSets').get()
+      
+      let updated = 0
+      const errors: string[] = []
+      let batch = db.batch()
+      let batchCount = 0
+      
+      for (const doc of snapshot.docs) {
+        const data = doc.data()
+        
+        // Skip if already has isMaster field
+        if (data.isMaster !== undefined) continue
+        
+        try {
+          batch.update(doc.ref, {
+            isMaster: true,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          })
+          
+          updated++
+          batchCount++
+          
+          // Firestore batch limit is 500
+          if (batchCount >= 500) {
+            await batch.commit()
+            batch = db.batch()
+            batchCount = 0
+          }
+          
+        } catch (error: any) {
+          errors.push(`${data.name || doc.id}: ${error.message}`)
+        }
+      }
+      
+      // Commit remaining
+      if (batchCount > 0) {
+        await batch.commit()
+      }
+      
+      console.log(`OptionSets migration completed: ${updated} updated, ${errors.length} errors`)
+      
+      res.status(200).json({
+        success: true,
+        updated,
+        errors
+      })
+      
+    } catch (error: any) {
+      console.error('Migration failed:', error)
+      res.status(500).json({
+        error: 'Migration failed',
+        message: error.message
+      })
+    }
+  })
+})
