@@ -1246,6 +1246,30 @@ export async function getSubsetsForMaster(masterSetId: string): Promise<OptionSe
   })) as OptionSet[]
 }
 
+// Migration: Mark all existing OptionSets as Master
+export async function migrateOptionSetsToMaster(): Promise<{ updated: number; errors: string[] }> {
+  const allSets = await getOptionSets()
+  let updated = 0
+  const errors: string[] = []
+  
+  for (const optionSet of allSets) {
+    // Skip if already has isMaster field
+    if (optionSet.isMaster !== undefined) continue
+    
+    try {
+      await updateDoc(doc(db, 'optionSets', optionSet.id!), {
+        isMaster: true,  // Mark as Master
+        updatedAt: serverTimestamp()
+      })
+      updated++
+    } catch (error) {
+      errors.push(`${optionSet.name}: ${error instanceof Error ? error.message : '未知錯誤'}`)
+    }
+  }
+  
+  return { updated, errors }
+}
+
 // Create Subset from Master (no approval needed)
 export async function createSubsetFromMaster(
   masterSetId: string,

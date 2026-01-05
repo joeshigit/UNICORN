@@ -7,7 +7,8 @@ import {
   migrateOptionSetCode,
   deleteOptionSetViaFunction,
   updateOptionSetViaFunction,
-  batchUploadOptionsViaFunction
+  batchUploadOptionsViaFunction,
+  migrateOptionSetsToMaster
 } from '@/lib/firestore'
 import type { OptionSet, OptionItem } from '@/types'
 
@@ -69,6 +70,9 @@ export default function AdminOptionSetsPage() {
   const [uploadMode, setUploadMode] = useState<'append' | 'replace' | 'merge'>('append')
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // Master/Subset migration state
+  const [migratingToMaster, setMigratingToMaster] = useState(false)
   
   // Dictionary Preloading
   const preloadedOptions = useMemo(() => {
@@ -238,6 +242,31 @@ export default function AdminOptionSetsPage() {
     }
   }
   
+  // Migrate all OptionSets to Master
+  async function handleMigrateToMaster() {
+    if (!confirm('確定要將所有現有的 OptionSets 標記為 Master？\n\n這個操作會為所有沒有 isMaster 欄位的 OptionSets 加上 isMaster: true。\n\n已有 isMaster 欄位的不會受影響。')) {
+      return
+    }
+    
+    setMigratingToMaster(true)
+    try {
+      const result = await migrateOptionSetsToMaster()
+      
+      if (result.errors.length > 0) {
+        alert(`遷移完成！\n\n成功: ${result.updated} 個\n失敗: ${result.errors.length} 個\n\n錯誤：\n${result.errors.join('\n')}`)
+      } else {
+        alert(`遷移成功！已將 ${result.updated} 個 OptionSets 標記為 Master。`)
+      }
+      
+      await loadOptionSets()
+    } catch (error: any) {
+      console.error('遷移失敗:', error)
+      alert('遷移失敗: ' + error.message)
+    } finally {
+      setMigratingToMaster(false)
+    }
+  }
+  
   // 🦄 ADMIN POWER: Delete
   async function handleDelete(optionSetId: string) {
     if (!confirm('確定要刪除此選項池？此操作無法復原！')) {
@@ -385,6 +414,34 @@ export default function AdminOptionSetsPage() {
           <p className="text-red-400 text-sm">
             🚨 有 {needsMigration.length} 個選項池缺少代碼（code），需要進行遷移。
           </p>
+        </div>
+      )}
+
+      {/* Master/Subset Migration */}
+      {optionSets.some(os => os.isMaster === undefined) && (
+        <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <p className="text-blue-400 text-sm mb-2">
+                🦄 <strong>Master/Subset 功能升級</strong>
+              </p>
+              <p className="text-blue-300 text-sm mb-3">
+                系統已升級支援 Master/Subset OptionSet 設計。現有的 OptionSets 需要標記為 Master，才能在「設計表格」中顯示並建立子集。
+              </p>
+              <p className="text-blue-400 text-xs">
+                • 此操作會為所有現有 OptionSets 加上 isMaster: true<br/>
+                • 已標記的 OptionSets 不會受影響<br/>
+                • 操作後 Leader 才能建立 Subset
+              </p>
+            </div>
+            <button
+              onClick={handleMigrateToMaster}
+              disabled={migratingToMaster}
+              className="ml-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 transition-colors font-medium whitespace-nowrap"
+            >
+              {migratingToMaster ? '遷移中...' : '執行遷移'}
+            </button>
+          </div>
         </div>
       )}
 
