@@ -1122,3 +1122,45 @@ export async function getRecentSubmissionsForMyTemplates(
     })
     .slice(0, limit)
 }
+
+// ---------- Template Access Management ----------
+
+// Update template access settings
+export async function updateTemplateAccess(
+  templateId: string,
+  accessType: 'all' | 'whitelist',
+  accessWhitelist?: string[]
+): Promise<void> {
+  await updateDoc(doc(db, 'templates', templateId), {
+    accessType,
+    accessWhitelist: accessWhitelist || [],
+    updatedAt: serverTimestamp()
+  })
+}
+
+// Update template managers
+export async function updateTemplateManagers(
+  templateId: string,
+  managerEmails: string[]
+): Promise<void> {
+  // UNICORN: Limit to 5 managers
+  if (managerEmails.length > 5) {
+    throw new Error('最多只能設定 5 位管理者')
+  }
+  
+  await updateDoc(doc(db, 'templates', templateId), {
+    managerEmails,
+    updatedAt: serverTimestamp()
+  })
+}
+
+// Toggle template enabled status
+export async function toggleTemplateEnabled(
+  templateId: string,
+  enabled: boolean
+): Promise<void> {
+  await updateDoc(doc(db, 'templates', templateId), {
+    enabled,
+    updatedAt: serverTimestamp()
+  })
+}
