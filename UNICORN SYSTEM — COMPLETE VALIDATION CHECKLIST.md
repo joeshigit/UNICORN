@@ -8,6 +8,35 @@ If any item fails, the design is NOT Unicorn-compliant.
 
 ⸻
 
+SECTION 0 — CORE OBJECTIVE VALIDATION (MUST PASS FIRST)
+
+UNICORN 系統的根本目標是建立一個**標準化資料收集系統**。
+
+### 目標 1：標準化建表
+	•	Leader 可以重用選項池（optionSets）建立表格？
+	•	表格使用統一的分類（module）和動作（action）名稱？
+	•	選項池、分類、動作有治理機制，不會隨意新增重複項目？
+
+### 目標 2：扁平化資料結構
+	•	submission 的用戶資料欄位直接存在文件頂層？
+	•	系統欄位使用 `_` 前綴區分？
+	•	不使用 `data: { field: value }` 巢狀結構？
+	•	可以直接用 `.where('fieldName', '==', value)` 查詢？
+
+### 目標 3：單一資料池
+	•	所有表格的提交都存在同一個 `submissions` collection？
+	•	可以跨表格查詢（如：所有 HR 部門的提交）？
+	•	可以按分類查詢（如：所有「行政」類表格的提交）？
+	•	不需要 JOIN 就能取得完整資料？
+
+### UNICORN 價值驗證
+	•	傳統系統：每個表格一個資料表，資料分散
+	•	UNICORN：統一字典 + 統一資料池 = 可當作一個大表格查詢
+
+❌ If any core objective is not met → the system is NOT a Unicorn system
+
+⸻
+
 SECTION 1 — SYSTEM INTENT & SCOPE VALIDATION
 	•	Is the system explicitly described as operational, not analytical?
 	•	Is Firestore used as a decision store, not a calculator?
