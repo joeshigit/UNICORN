@@ -1030,6 +1030,52 @@ export async function getUserFormStats(userEmail: string): Promise<UserFormStats
   })) as UserFormStats[]
 }
 
+// Get favorite forms
+export async function getFavoriteForms(userEmail: string): Promise<UserFormStats[]> {
+  const q = query(
+    collection(db, 'userFormStats'),
+    where('userEmail', '==', userEmail),
+    where('isFavorite', '==', true),
+    orderBy('lastUsedAt', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as UserFormStats[]
+}
+
+// Get most used forms
+export async function getMostUsedForms(userEmail: string, limit: number = 5): Promise<UserFormStats[]> {
+  const q = query(
+    collection(db, 'userFormStats'),
+    where('userEmail', '==', userEmail),
+    orderBy('useCount', 'desc')
+  )
+  const snapshot = await getDocs(q)
+  const stats = snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  })) as UserFormStats[]
+  
+  return stats.slice(0, limit)
+}
+
+// Toggle favorite
+export async function toggleFavorite(userEmail: string, templateId: string): Promise<void> {
+  // Use composite ID for predictable document reference
+  const statsId = `${userEmail.replace(/[@.]/g, '_')}_${templateId}`
+  const docRef = doc(db, 'userFormStats', statsId)
+  const docSnap = await getDoc(docRef)
+  
+  if (docSnap.exists()) {
+    const currentFavorite = docSnap.data().isFavorite || false
+    await updateDoc(docRef, {
+      isFavorite: !currentFavorite
+    })
+  }
+}
+
 // ---------- Templates Query Helpers ----------
 
 // Get templates created this month (UNICORN: use _createdMonth period key)
