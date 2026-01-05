@@ -1219,17 +1219,10 @@ export async function toggleTemplateEnabled(
 // ============================================
 
 // Get Master OptionSets only
+// UNICORN: Backward compatibility - treat undefined as Master
 export async function getMasterOptionSets(): Promise<OptionSet[]> {
-  const q = query(
-    collection(db, 'optionSets'),
-    where('isMaster', '==', true),
-    orderBy('createdAt', 'desc')
-  )
-  const snapshot = await getDocs(q)
-  return snapshot.docs.map(doc => ({
-    id: doc.id,
-    ...doc.data()
-  })) as OptionSet[]
+  const allSets = await getOptionSets()
+  return allSets.filter(os => os.isMaster === true || os.isMaster === undefined)
 }
 
 // Get Subsets for a specific Master

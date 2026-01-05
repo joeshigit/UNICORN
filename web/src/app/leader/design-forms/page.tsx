@@ -141,8 +141,9 @@ export default function DesignFormsPage() {
     }
   }
 
-  const masterSets = optionSets.filter(os => os.isMaster)
-  const subsetSets = optionSets.filter(os => !os.isMaster)
+  // UNICORN: Backward compatibility - treat undefined as Master
+  const masterSets = optionSets.filter(os => os.isMaster === true || os.isMaster === undefined)
+  const subsetSets = optionSets.filter(os => os.isMaster === false)
   
   const filteredMasterItems = selectedMaster?.items.filter(item =>
     item.value.toLowerCase().includes(searchQuery.toLowerCase()) ||
