@@ -19,72 +19,96 @@ Leader 可以重用：
 
 這樣所有表格使用相同的語意，資料可以跨表格比較和分析。
 
-### 目標 2：扁平化資料結構（Flat Data Structure）— Hybrid 分區扁平
+### 目標 2：扁平化資料結構（Flat Data Structure）— Universal KEY 設計
 
-每個 submission 採用 **Hybrid 分區扁平** 設計，兼顧「跨表查詢穩定性」與「表單自由度」：
+UNICORN 採用 **Universal KEY** 設計：
+
+#### KEY vs LABEL vs VALUE
+
+| 概念 | 說明 | 範例 |
+|------|------|------|
+| **KEY** | 系統統一的欄位名稱，跨所有表格相同 | `school`, `startDateTime`, `quantity1` |
+| **LABEL** | UI 顯示名稱，Leader 自由設計 | 「入營學校」「駐守學校」「發信學校」 |
+| **VALUE** | 標準化的值，來自 optionSet | `粵華中學`（不是「粵華」「粵華學校」） |
+
+#### Universal Keys（系統固定的欄位 KEY）
+
+| KEY | 類型 | 說明 |
+|-----|------|------|
+| `school` | optionSet | 學校 |
+| `service` | optionSet | 服務類型 |
+| `project` | optionSet | 項目 |
+| `format` | optionSet | 格式 |
+| `action` | optionSet | 動作類型 |
+| `startDateTime` | datetime | 開始時間（yyyymmdd hh:mm） |
+| `endDateTime` | datetime | 結束時間（yyyymmdd hh:mm） |
+| `quantity1` | number | 數量1 |
+| `quantity2` | number | 數量2 |
+| `quantity3` | number | 數量3 |
+| `notes1` | text | 備註（單行） |
+| `notes2` | textarea | 備註（多行） |
+
+#### 資料結構範例
 
 ```javascript
-// ✅ 正確：Hybrid 分區扁平結構
+// ✅ 正確：Universal KEY 設計
 {
-  // ===== 系統 Metadata（_ 前綴，必須有，有索引）=====
-  _templateId: "template_xyz",
-  _templateCode: "MONTHLY_REPORT",
-  _templateModule: "行政",           // 標準化分類
-  _templateAction: "報告",           // 標準化動作
+  // ===== 系統 Metadata（_ 前綴）=====
+  _templateId: "template_camp_register",
+  _templateModule: "CAMP",
+  _templateAction: "REGISTER",
   _templateVersion: 1,
-  _submitterId: "user_001",
-  _submitterEmail: "staff@org.com",
+  _submitterId: "staff@org.com",
   _submittedAt: Timestamp,
-  _submittedMonth: "2026-01",        // 月份索引
+  _submittedMonth: "2026-01",
+  _status: "ACTIVE",
   
-  // ===== 標準化查詢欄位（_query 前綴，Cloud Function 寫入時計算）=====
-  _queryDepartment: "HR",            // 跨表查詢用，從 optionSet 標準化
-  _queryStatus: "completed",         // 跨表查詢用
-  _querySchool: "SCH001",            // 跨表查詢用
+  // ===== 用戶資料（Universal KEY: VALUE）=====
+  school: "粵華中學",              // KEY 統一，VALUE 來自 optionSet
+  startDateTime: "20260115 09:00", // KEY 統一，格式固定
+  endDateTime: "20260117 16:00",
+  quantity1: 30,
+  notes1: "需要素食餐",
   
-  // ===== 用戶填寫資料（頂層，顯示用，可能沒索引）=====
-  department: "HR",
-  reportTitle: "2026年1月工作報告",
-  content: "本月完成...",
-  customField: "any value",
+  // ===== 欄位 LABEL 快照（顯示用）=====
+  _fieldLabels: {
+    school: "入營學校",            // 這個表格叫「入營學校」
+    startDateTime: "入營時間",
+    endDateTime: "退營時間",
+    quantity1: "學生人數",
+    notes1: "特殊需求"
+  },
   
-  // ===== 顯示用快照 =====
-  _labelSnapshots: {
-    department: "人力資源部",
-    _querySchool: "台北第一學校"
-  }
+  // ===== 選項 LABEL 快照（如果 value ≠ label）=====
+  _optionLabels: {
+    school: "粵華中學"             // 選項的顯示名稱
+  },
+  
+  // ===== 檔案 =====
+  files: [...]
 }
 
 // ❌ 錯誤：巢狀結構
 {
   _templateId: "template_xyz",
-  data: {
-    department: "HR"          // 巢狀違反 Firestore 最佳實踐
+  values: {
+    school: "粵華中學"            // 巢狀違反 Firestore 最佳實踐
   }
+}
+
+// ❌ 錯誤：自定義 KEY
+{
+  入營學校: "粵華中學",            // KEY 不能是中文或自定義名稱
+  campSchool: "粵華中學"          // KEY 必須用 Universal KEY
 }
 ```
 
-**Hybrid 分區扁平原則**：
+#### 為什麼用 Universal KEY？
 
-| 層級 | 前綴 | 用途 | 索引 |
-|------|-----|------|------|
-| 系統 Metadata | `_` | 追蹤、審計、版本 | ✅ 必有 |
-| 標準化查詢欄位 | `_query` | 跨表分析、報表 | ✅ 必有 |
-| 用戶資料欄位 | 無前綴 | 顯示、單表查詢 | ⚠️ 視需求 |
-| 顯示快照 | `_labelSnapshots` | 歷史標籤顯示 | ❌ 無 |
-
-**為什麼用 Hybrid？**
-1. **避免索引爆炸**：Firestore 複合索引上限 200 個，`_query*` 欄位數量可控
-2. **保證跨表查詢**：不管 Leader 把欄位叫 `dept` 還是 `department`，只要對應到 `_queryDepartment`，跨表查詢就一致
-3. **保留表單自由度**：用戶欄位仍在頂層，簡單查詢仍可用
-4. **符合 Firestore 天性**：Cloud Function 在寫入時計算，讀取時零計算
-
-**規則**：
-- 系統欄位用 `_` 前綴（如 `_templateId`, `_submittedAt`）
-- 標準化查詢欄位用 `_query` 前綴（如 `_queryDepartment`）
-- 用戶資料欄位直接放頂層，無前綴（如 `department`, `status`）
-- 建立表格時驗證欄位名稱不能以 `_` 開頭
-- `_query*` 欄位由 Cloud Function 在 submission 寫入時自動計算
+1. **跨表查詢一致**：所有表格的 `school` 都是同一個 KEY，直接查詢
+2. **不需要欄位映射**：不需要 `_query*` 前綴，KEY 本身就是查詢欄位
+3. **LABEL 靈活**：不同表格可用不同 LABEL，不影響資料查詢
+4. **VALUE 標準化**：透過 optionSet 強制統一，避免「粵華」「粵華中學」不一致
 
 ### 目標 3：單一資料池（Single Data Pool）
 
@@ -94,26 +118,26 @@ Leader 可以重用：
 - 可以跨表格查詢和統計
 
 ```javascript
-// 跨所有表格查詢 HR 部門的資料（用標準化欄位）
+// 跨所有表格查詢「粵華中學」的資料
 db.collection('submissions')
-  .where('_queryDepartment', '==', 'HR')
+  .where('school', '==', '粵華中學')
 
 // 查詢特定類型的表格
 db.collection('submissions')
-  .where('_templateModule', '==', '行政')
+  .where('_templateModule', '==', 'CAMP')
 
 // 按月份統計所有提交
 db.collection('submissions')
   .where('_submittedMonth', '==', '2026-01')
 
-// 組合查詢：行政類 + HR 部門 + 2026年1月
+// 組合查詢：CAMP 類 + 粵華中學 + 2026年1月
 db.collection('submissions')
-  .where('_templateModule', '==', '行政')
-  .where('_queryDepartment', '==', 'HR')
+  .where('_templateModule', '==', 'CAMP')
+  .where('school', '==', '粵華中學')
   .where('_submittedMonth', '==', '2026-01')
 ```
 
-**跨表查詢的關鍵**：使用 `_query*` 標準化欄位，而非用戶自定義欄位名稱。
+**跨表查詢的關鍵**：使用 Universal KEY（如 `school`），不是 LABEL（如「入營學校」）。
 
 ### 🦄 這就是 UNICORN 的價值
 
@@ -122,6 +146,7 @@ db.collection('submissions')
 | 每個表格一個資料表 | 統一的 submissions 資料池 |
 | 資料分散，無法跨表查詢 | 單一池，可跨表格查詢 |
 | 每個表格定義自己的選項 | 共用選項池，語意一致 |
+| 欄位名稱不一致（dept, department, unit） | Universal KEY 統一（school） |
 | 查詢需要 JOIN 多個表 | 直接查詢，無需 JOIN |
 
 ---
@@ -156,6 +181,7 @@ REJECT any design with:
 - Read-time aggregation
 - Subcollections used as relational tables
 - UI recalculating historical truth
+- Custom field keys (must use Universal KEYs)
 
 If any are present → redesign.
 
@@ -194,7 +220,11 @@ CORRECT: Separate documents for each lifecycle stage
 
 ### ❌ Date Math in Queries
 WRONG: Query date ranges and sum
-CORRECT: Store _month = "YYYY-MM", query by month
+CORRECT: Store _submittedMonth = "YYYY-MM", query by month
+
+### ❌ Custom Field Keys
+WRONG: Leader defines arbitrary field keys like "campSchool", "入營學校"
+CORRECT: Leader selects from Universal KEYs (school, startDateTime, quantity1, etc.)
 
 ---
 
@@ -204,17 +234,18 @@ Most systems:
 - Store raw data
 - Recompute endlessly
 - Break over time
+- Allow inconsistent field names
 
 This system:
 - Captures decisions at write-time
 - Freezes truth
 - Separates collection vs computation
 - Leaders define meaning without engineers
+- Universal KEYs ensure query consistency
 
 ---
 
 ## Reference
 For complete validation checklist (18 sections), see:
 unicorn-dcs/UNICORN SYSTEM — COMPLETE VALIDATION CHECKLIST.md
-
 

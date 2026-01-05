@@ -1,6 +1,6 @@
 🦄 UNICORN SYSTEM — COMPLETE VALIDATION CHECKLIST
 
-(Authoritative Edition)
+(Authoritative Edition - Universal KEY Design)
 
 This checklist validates architecture, data model, UI behavior, governance, evolution, and misuse resistance.
 
@@ -17,24 +17,33 @@ UNICORN 系統的根本目標是建立一個**標準化資料收集系統**。
 	•	表格使用統一的分類（module）和動作（action）名稱？
 	•	選項池、分類、動作有治理機制，不會隨意新增重複項目？
 
-### 目標 2：扁平化資料結構（Hybrid 分區扁平）
-	•	submission 採用 Hybrid 分區扁平設計？
+### 目標 2：Universal KEY 設計（扁平化資料結構）
+
+| 概念 | 說明 | 範例 |
+|------|------|------|
+| **KEY** | 系統統一的欄位名稱 | `school`, `startDateTime`, `quantity1` |
+| **LABEL** | UI 顯示名稱（自由） | 「入營學校」「駐守學校」 |
+| **VALUE** | 標準化的值 | `粵華中學`（不是「粵華」） |
+
+驗證項目：
+	•	submission 使用 Universal KEY 作為欄位名稱？
+	•	欄位 KEY 只能從系統固定列表選擇（school, service, project 等）？
+	•	不允許自定義 KEY（如 `入營學校`、`campSchool`）？
 	•	系統 Metadata 使用 `_` 前綴（如 `_templateId`, `_submittedMonth`）？
-	•	標準化查詢欄位使用 `_query` 前綴（如 `_queryDepartment`）？
-	•	用戶資料欄位直接存在頂層，無前綴？
-	•	不使用 `data: { field: value }` 巢狀結構？
-	•	`_query*` 欄位由 Cloud Function 在寫入時計算？
-	•	跨表查詢使用 `_query*` 欄位，而非用戶自定義欄位？
+	•	用戶資料欄位直接存在頂層，用 Universal KEY（如 `school: "粵華中學"`）？
+	•	不使用 `values: { field: value }` 巢狀結構？
+	•	`_fieldLabels` 存欄位 LABEL 快照（顯示用）？
+	•	`_optionLabels` 存選項 LABEL 快照（如果 value ≠ label）？
 
 ### 目標 3：單一資料池
 	•	所有表格的提交都存在同一個 `submissions` collection？
-	•	可以跨表格查詢（如：所有 HR 部門的提交）？
-	•	可以按分類查詢（如：所有「行政」類表格的提交）？
+	•	可以跨表格查詢（如：`.where('school', '==', '粵華中學')`）？
+	•	可以按分類查詢（如：`.where('_templateModule', '==', 'CAMP')`）？
 	•	不需要 JOIN 就能取得完整資料？
 
 ### UNICORN 價值驗證
-	•	傳統系統：每個表格一個資料表，資料分散
-	•	UNICORN：統一字典 + 統一資料池 = 可當作一個大表格查詢
+	•	傳統系統：每個表格一個資料表，資料分散，欄位名稱不一致
+	•	UNICORN：Universal KEY + 統一資料池 = 可當作一個大表格查詢
 
 ❌ If any core objective is not met → the system is NOT a Unicorn system
 
@@ -47,7 +56,7 @@ SECTION 1 — SYSTEM INTENT & SCOPE VALIDATION
 	•	Does the design avoid pretending Firestore is Excel, SQL, or BigQuery?
 	•	Is the system resilient to misuse by non-technical users?
 
-❌ If the system relies on “users behaving correctly” → FAIL
+❌ If the system relies on "users behaving correctly" → FAIL
 
 ⸻
 
@@ -87,12 +96,14 @@ SECTION 4 — TEMPLATE SYSTEM VALIDATION
 For every template:
 	•	Stored as data, not code
 	•	Editable without redeploying UI
+	•	Fields use Universal KEYs only
 	•	Fields are typed explicitly
 	•	Validation rules are declarative
 	•	Conditional logic is visible and auditable
 	•	Templates are versioned
 	•	Old submissions reference old template versions
 
+❌ If templates use custom field keys → FAIL
 ❌ If templates mutate existing submissions → FAIL
 
 ⸻
@@ -102,12 +113,15 @@ SECTION 5 — SUBMISSION / EVENT VALIDATION
 For every submission collection:
 	•	One document = one user intent
 	•	Submission is immutable after creation
-	•	values reflect user input only
-	•	No derived values stored here
+	•	User data stored at top level using Universal KEYs
+	•	No derived values stored here (except _submittedMonth)
 	•	Status transitions are explicit
 	•	Submission references template + version
 	•	Submission has audit metadata
+	•	`_fieldLabels` preserves LABEL snapshot
+	•	`_optionLabels` preserves option display names
 
+❌ If submissions use nested `values: {}` structure → FAIL
 ❌ If submissions are edited like rows → FAIL
 
 ⸻
@@ -158,9 +172,10 @@ SECTION 9 — DATE, TIME & RANGE VALIDATION
 
 For all date/time usage:
 	•	All timestamps are timezone-safe
-	•	Date ranges stored explicitly
+	•	Date format is standardized (yyyymmdd hh:mm for datetime fields)
+	•	Date ranges stored explicitly (startDateTime, endDateTime)
 	•	Derived durations stored as numbers
-	•	Period keys precomputed (YYYY-MM, week)
+	•	Period keys precomputed (_submittedMonth = YYYY-MM)
 	•	No date math in queries
 	•	Calendar logic centralized
 
@@ -190,6 +205,7 @@ UI MUST:
 	•	Save progress incrementally
 	•	Prevent invalid actions visually
 	•	Never silently change data meaning
+	•	Display LABEL to users, store KEY:VALUE internally
 
 ❌ If UI behaves like a live spreadsheet → FAIL
 
@@ -199,6 +215,8 @@ SECTION 12 — CLOUD FUNCTION GOVERNANCE VALIDATION
 
 Cloud Functions MUST:
 	•	Validate invariants
+	•	Validate Universal KEY usage
+	•	Validate VALUE against optionSet
 	•	Enforce permissions
 	•	Enforce state locks
 	•	Write derived views
@@ -211,12 +229,12 @@ Cloud Functions MUST:
 
 SECTION 13 — SECURITY & MISUSE RESISTANCE VALIDATION
 	•	Firestore rules enforce ownership
-	•	Users cannot edit others’ submissions
+	•	Users cannot edit others' submissions
 	•	Locked data is write-protected
 	•	Role-based access is enforced
 	•	No critical logic relies on UI trust
 
-❌ If rules assume “frontend will behave” → FAIL
+❌ If rules assume "frontend will behave" → FAIL
 
 ⸻
 
@@ -237,6 +255,7 @@ SECTION 15 — PERFORMANCE & COST VALIDATION
 	•	Query fan-out avoided
 	•	Dictionary data cached
 	•	Writes preferred over reads
+	•	Universal KEYs enable efficient indexing
 
 ❌ If design causes read amplification → FAIL
 
@@ -259,13 +278,15 @@ SECTION 17 — HUMAN FACTOR VALIDATION (CRITICAL)
 	•	Undo requires explicit action
 	•	Training is not required to avoid mistakes
 	•	System behavior is predictable
+	•	Leader cannot create invalid KEY names (forced to select from list)
 
-❌ If system requires “careful usage” → FAIL
+❌ If system requires "careful usage" → FAIL
 
 ⸻
 
 SECTION 18 — FUTURE EXTENSIBILITY VALIDATION
 	•	New templates require no schema change
+	•	New Universal KEYs can be added to system list
 	•	New meaning collections plug in cleanly
 	•	New domains reuse existing layers
 	•	System does not assume domain-specific logic

@@ -1,6 +1,6 @@
-[6:26 pm, 29/12/2025] Joe Shi: 🦄 UNICORN FIRESTORE SYSTEM GUIDE (v2)
+🦄 UNICORN FIRESTORE SYSTEM GUIDE (v3)
 
-Universal Data Collection & Template System
+Universal Data Collection & Template System — Universal KEY Design
 (Cursor AI – Mandatory Compliance)
 
 ⸻
@@ -13,285 +13,215 @@ This system is:
 ✔ Leader-defined templates
 ✔ User-submitted facts
 ✔ Firestore-native
+✔ Universal KEY design (KEY/LABEL/VALUE separation)
 
 This system is NOT:
-	…
-[6:28 pm, 29/12/2025] Joe Shi: You’re right — and good catch.
-What you had was strong, but it was still missing several system-level and human-factor validations that Unicorn systems must include.
 
-Below is a complete, final, no-excuses validation checklist.
-This version is intentionally long — because it’s meant to stop bad designs, not approve fast ones.
-
-This is the checklist Cursor AI (and humans) must pass before ANY design is accepted.
+✖ A spreadsheet
+✖ A SQL database
+✖ A reporting tool
+✖ A system that allows custom field names
 
 ⸻
 
-🦄 UNICORN SYSTEM — COMPLETE VALIDATION CHECKLIST
+SECTION 1 — UNIVERSAL KEY 設計原則
 
-(Authoritative Edition)
+### KEY vs LABEL vs VALUE
 
-This checklist validates architecture, data model, UI behavior, governance, evolution, and misuse resistance.
+| 概念 | 說明 | 誰控制 | 範例 |
+|------|------|--------|------|
+| **KEY** | 系統統一的欄位名稱 | 系統固定 | `school`, `startDateTime` |
+| **LABEL** | UI 顯示名稱 | Leader 自由 | 「入營學校」「駐守學校」 |
+| **VALUE** | 標準化的值 | optionSet 限制 | `粵華中學` |
 
-If any item fails, the design is NOT Unicorn-compliant.
+### Universal Keys（系統固定列表）
 
-⸻
+| KEY | 類型 | 說明 |
+|-----|------|------|
+| `school` | optionSet | 學校 |
+| `service` | optionSet | 服務類型 |
+| `project` | optionSet | 項目 |
+| `format` | optionSet | 格式 |
+| `action` | optionSet | 動作類型 |
+| `department` | optionSet | 部門 |
+| `status` | optionSet | 狀態 |
+| `category` | optionSet | 分類 |
+| `startDateTime` | datetime | 開始時間（yyyymmdd hh:mm） |
+| `endDateTime` | datetime | 結束時間（yyyymmdd hh:mm） |
+| `quantity1` | number | 數量1 |
+| `quantity2` | number | 數量2 |
+| `quantity3` | number | 數量3 |
+| `amount1` | number | 金額1 |
+| `amount2` | number | 金額2 |
+| `notes1` | text | 備註1（單行） |
+| `notes2` | textarea | 備註2（多行） |
+| `title` | text | 標題 |
+| `name` | text | 名稱 |
+| `description` | textarea | 描述 |
+| `content` | textarea | 內容 |
+| `attachment` | file | 附件 |
+| `documents` | file | 文件 |
+| `reference` | reference | 引用 |
 
-SECTION 1 — SYSTEM INTENT & SCOPE VALIDATION
-	•	Is the system explicitly described as operational, not analytical?
-	•	Is Firestore used as a decision store, not a calculator?
-	•	Is there a clear separation between data collection and data analysis?
-	•	Does the design avoid pretending Firestore is Excel, SQL, or BigQuery?
-	•	Is the system resilient to misuse by non-technical users?
+### 關鍵原則
 
-❌ If the system relies on “users behaving correctly” → FAIL
-
-⸻
-
-SECTION 2 — CONCEPTUAL LAYERING VALIDATION
-
-Every collection MUST map cleanly to exactly one layer:
-	•	Meaning (Dictionary)
-	•	Template
-	•	Submission (Event)
-	•	Derived View (State)
-
-Additional validation:
-	•	No collection mixes two layers
-	•	No document changes role over time
-	•	Layer boundaries are documented
-
-❌ If any collection has dual purpose → FAIL
-
-⸻
-
-SECTION 3 — MEANING / DICTIONARY VALIDATION
-
-For every dictionary collection:
-	•	Each document represents pure meaning
-	•	IDs are semantic (not random)
-	•	Values are stable and versioned
-	•	No transactional fields present
-	•	Safe to preload into UI
-	•	Changes require explicit governance
-
-❌ If dictionary values are frequently edited → FAIL
+1. **KEY 統一**：Leader 只能從系統固定的 Universal Key 列表選擇
+2. **LABEL 自由**：同一個 KEY 可以有不同 LABEL（「入營學校」「發生學校」）
+3. **VALUE 標準化**：透過 optionSet 強制統一，不允許「粵華」「粵華中學」混用
+4. **扁平結構**：用戶資料直接存在文件頂層，不使用巢狀結構
 
 ⸻
 
-SECTION 4 — TEMPLATE SYSTEM VALIDATION
+SECTION 2 — 資料結構
 
-For every template:
-	•	Stored as data, not code
-	•	Editable without redeploying UI
-	•	Fields are typed explicitly
-	•	Validation rules are declarative
-	•	Conditional logic is visible and auditable
-	•	Templates are versioned
-	•	Old submissions reference old template versions
+### Template（表格定義）
 
-❌ If templates mutate existing submissions → FAIL
+```javascript
+// templates/{templateId}
+{
+  name: "營隊登記",
+  moduleId: "CAMP",
+  actionId: "REGISTER",
+  enabled: true,
+  version: 1,
+  createdBy: "leader@org.com",
+  fields: [
+    { key: "school", type: "dropdown", label: "入營學校", required: true, order: 0, optionSetId: "school" },
+    { key: "startDateTime", type: "datetime", label: "入營時間", required: true, order: 1 },
+    { key: "endDateTime", type: "datetime", label: "退營時間", required: true, order: 2 },
+    { key: "quantity1", type: "number", label: "學生人數", required: true, order: 3 },
+    { key: "notes1", type: "text", label: "特殊需求", required: false, order: 4 }
+  ]
+}
+```
 
-⸻
+### Submission（提交資料）
 
-SECTION 5 — SUBMISSION / EVENT VALIDATION
+```javascript
+// submissions/{submissionId}
+{
+  // ===== 系統 Metadata（_ 前綴）=====
+  _templateId: "template_camp_register",
+  _templateModule: "CAMP",
+  _templateAction: "REGISTER",
+  _templateVersion: 1,
+  _submitterId: "user_001",
+  _submitterEmail: "staff@org.com",
+  _submittedAt: Timestamp,
+  _submittedMonth: "2026-01",
+  _status: "ACTIVE",
+  
+  // ===== 用戶資料（Universal KEY: VALUE）=====
+  school: "粵華中學",
+  startDateTime: "20260115 09:00",
+  endDateTime: "20260117 16:00",
+  quantity1: 30,
+  notes1: "需要素食餐",
+  
+  // ===== LABEL 快照（顯示用）=====
+  _fieldLabels: {
+    school: "入營學校",
+    startDateTime: "入營時間",
+    endDateTime: "退營時間",
+    quantity1: "學生人數",
+    notes1: "特殊需求"
+  },
+  
+  _optionLabels: {
+    school: "粵華中學"
+  },
+  
+  // ===== 檔案 =====
+  files: []
+}
+```
 
-For every submission collection:
-	•	One document = one user intent
-	•	Submission is immutable after creation
-	•	values reflect user input only
-	•	No derived values stored here
-	•	Status transitions are explicit
-	•	Submission references template + version
-	•	Submission has audit metadata
+### OptionSet（選項池）
 
-❌ If submissions are edited like rows → FAIL
-
-⸻
-
-SECTION 6 — STATUS, STATE & LIFECYCLE VALIDATION
-
-For each lifecycle-based entity:
-	•	States are explicit fields
-	•	Transitions are finite and documented
-	•	Invalid transitions are blocked
-	•	Terminal states exist (locked, archived)
-	•	UI respects state constraints
-	•	Cloud Functions enforce state
-
-❌ If state is inferred from missing fields → FAIL
-
-⸻
-
-SECTION 7 — DERIVED VIEW / STATE VALIDATION
-
-For each derived view:
-	•	Designed for one primary query
-	•	Contains no ambiguous fields
-	•	All values are decided at write-time
-	•	Document ID strategy is deterministic
-	•	Indexed appropriately
-	•	Lockable / finalizable
-
-❌ If derived views require joins → FAIL
-
-⸻
-
-SECTION 8 — COMPUTATION & DECISION VALIDATION
-
-For each computed field:
-	•	Computed once (UI or Cloud Function)
-	•	Stored permanently
-	•	Never recomputed silently
-	•	Source inputs are traceable
-	•	Recalculation requires explicit action
-	•	Historical correctness preserved
-
-❌ If recalculation happens automatically → FAIL
-
-⸻
-
-SECTION 9 — DATE, TIME & RANGE VALIDATION
-
-For all date/time usage:
-	•	All timestamps are timezone-safe
-	•	Date ranges stored explicitly
-	•	Derived durations stored as numbers
-	•	Period keys precomputed (YYYY-MM, week)
-	•	No date math in queries
-	•	Calendar logic centralized
-
-❌ If UI computes date logic repeatedly → FAIL
+```javascript
+// optionSets/{optionSetId}
+{
+  code: "school",                    // 對應 Universal Key
+  name: "學校",
+  items: [
+    { value: "粵華中學", label: "粵華中學", status: "active", sort: 0 },
+    { value: "培正中學", label: "培正中學", status: "active", sort: 1 }
+  ]
+}
+```
 
 ⸻
 
-SECTION 10 — RELATIONSHIP & IDENTITY VALIDATION
+SECTION 3 — 查詢設計
 
-For all entity relationships:
-	•	One canonical source of identity
-	•	Snapshots used where history matters
-	•	No read-time joins
-	•	Referential meaning preserved
-	•	Identity changes handled explicitly
+### 跨表格查詢（Universal KEY 的威力）
 
-❌ If foreign keys are assumed stable forever → FAIL
+```javascript
+// 查詢所有「粵華中學」的提交（不管是哪個表格）
+db.collection('submissions')
+  .where('school', '==', '粵華中學')
 
-⸻
+// 查詢 CAMP 類的所有提交
+db.collection('submissions')
+  .where('_templateModule', '==', 'CAMP')
 
-SECTION 11 — UI BEHAVIOR VALIDATION
+// 組合查詢
+db.collection('submissions')
+  .where('_templateModule', '==', 'CAMP')
+  .where('school', '==', '粵華中學')
+  .where('_submittedMonth', '==', '2026-01')
+```
 
-UI MUST:
-	•	Be step-based (pipeline)
-	•	Provide previews, not truth
-	•	Make consequences visible
-	•	Save progress incrementally
-	•	Prevent invalid actions visually
-	•	Never silently change data meaning
+### 為什麼這樣設計？
 
-❌ If UI behaves like a live spreadsheet → FAIL
-
-⸻
-
-SECTION 12 — CLOUD FUNCTION GOVERNANCE VALIDATION
-
-Cloud Functions MUST:
-	•	Validate invariants
-	•	Enforce permissions
-	•	Enforce state locks
-	•	Write derived views
-	•	Be idempotent
-	•	Log actions
-
-❌ If Cloud Functions perform UX logic → FAIL
+| 傳統做法 | UNICORN 做法 |
+|---------|-------------|
+| 每個表格不同欄位名（dept, department, unit） | 統一用 Universal Key（school） |
+| 需要 `_querySchool` 來標準化 | KEY 本身就是標準化的 |
+| 查詢前要先映射欄位 | 直接查詢，無需映射 |
 
 ⸻
 
-SECTION 13 — SECURITY & MISUSE RESISTANCE VALIDATION
-	•	Firestore rules enforce ownership
-	•	Users cannot edit others’ submissions
-	•	Locked data is write-protected
-	•	Role-based access is enforced
-	•	No critical logic relies on UI trust
+SECTION 4 — UI 流程
 
-❌ If rules assume “frontend will behave” → FAIL
+### Leader 建立表格
 
-⸻
+1. 選擇 KEY（從 Universal Key 列表：school, startDateTime, quantity1...）
+2. 輸入 LABEL（自由文字：「入營學校」）
+3. 設定是否必填、順序
+4. 如果是 dropdown，選擇對應的 optionSet
 
-SECTION 14 — BACKFILL & MIGRATION VALIDATION
-	•	Schema evolution is additive
-	•	Backfill functions are defined
-	•	Backfills are repeatable
-	•	Old documents remain valid
-	•	Migrations do not alter history
+### Staff 填寫表格
 
-❌ If migration rewrites truth → FAIL
+1. 看到 LABEL（「入營學校」）
+2. 選擇 VALUE（「粵華中學」）
+3. 提交後，系統存 `school: "粵華中學"`
 
-⸻
+### 系統查詢
 
-SECTION 15 — PERFORMANCE & COST VALIDATION
-	•	Document sizes are bounded
-	•	Hot paths are optimized
-	•	Query fan-out avoided
-	•	Dictionary data cached
-	•	Writes preferred over reads
-
-❌ If design causes read amplification → FAIL
+```javascript
+.where('school', '==', '粵華中學')  // 直接用 KEY 查詢
+```
 
 ⸻
 
-SECTION 16 — EXPORT & ANALYTICS VALIDATION
-	•	Firestore used for operations
-	•	Analytics done in Sheets/BigQuery
-	•	Exports are append-only
-	•	No operational dependency on analytics
-	•	Analytical recalculation allowed
+SECTION 5 — 禁止事項
 
-❌ If Firestore used for reporting math → FAIL
-
-⸻
-
-SECTION 17 — HUMAN FACTOR VALIDATION (CRITICAL)
-	•	Non-technical users cannot break logic
-	•	Errors are visible and explainable
-	•	Undo requires explicit action
-	•	Training is not required to avoid mistakes
-	•	System behavior is predictable
-
-❌ If system requires “careful usage” → FAIL
+❌ 允許 Leader 自定義 KEY（如 `入營學校`, `campSchool`）
+❌ 使用巢狀結構（如 `values: { school: "粵華中學" }`）
+❌ 在 submission 存 LABEL 而非 VALUE
+❌ 允許 VALUE 變體（如 `粵華`, `粵華學校`, `粵華中學` 混用）
+❌ 在查詢時做欄位映射
 
 ⸻
 
-SECTION 18 — FUTURE EXTENSIBILITY VALIDATION
-	•	New templates require no schema change
-	•	New meaning collections plug in cleanly
-	•	New domains reuse existing layers
-	•	System does not assume domain-specific logic
+SECTION 6 — 版本歷史
 
-❌ If adding a domain requires redesign → FAIL
+- v1：初版（Hybrid Flat Design with `_query*` prefix）
+- v2：加入 validation checklist
+- v3：**Universal KEY Design**（移除 `_query*`，KEY 本身就是標準化欄位）
 
 ⸻
 
-FINAL VERDICT RULE
-
-Unicorn Compliance requires a perfect score.
-
-Partial compliance = future failure.
-
-Cursor AI MUST:
-	•	Explicitly state which sections passed
-	•	Explain any failure
-	•	Redesign until all sections pass
-
-⸻
-
-Why This Version Is Complete
-
-This checklist:
-	•	Covers technical correctness
-	•	Covers human misuse
-	•	Covers time & evolution
-	•	Covers governance
-	•	Covers future extensibility
-
-This is the difference between:
-	•	A clever Firebase app
-	•	A system that survives 10 years
+For complete validation checklist, see:
+`UNICORN SYSTEM — COMPLETE VALIDATION CHECKLIST.md`
