@@ -229,10 +229,10 @@ export const cancelSubmission = functions
         }
         
         // 🦄 UNICORN: 狀態檢查 - 只有 ACTIVE 可以變成 CANCELLED
-        if (submissionData.status !== 'ACTIVE') {
+        if (submissionData._status !== 'ACTIVE') {
           res.status(400).json({ 
             error: 'Invalid state transition',
-            message: `Cannot cancel a submission with status: ${submissionData.status}`
+            message: `Cannot cancel a submission with status: ${submissionData._status}`
           })
           return
         }
@@ -288,6 +288,16 @@ const ADMIN_EMAILS = ['joeshi@dbyv.org']
 function isAdminEmail(email: string | null | undefined): boolean {
   if (!email) return false
   return ADMIN_EMAILS.includes(email)
+}
+
+// ============================================
+// 🦄 UNICORN: Superuser 名單
+// ============================================
+const SUPERUSER_EMAILS = ['tong@dbyv.org', 'jason@dbyv.org', 'joeshi@dbyv.org']
+
+function isSuperuserEmail(email: string | null | undefined): boolean {
+  if (!email) return false
+  return SUPERUSER_EMAILS.includes(email)
 }
 
 /**
@@ -1804,3 +1814,915 @@ export const migrateOptionSetsToMaster = functions.region('asia-east1').https.on
     }
   })
 })
+
+// ============================================
+// 🦄 UNICORN: Submission Workflow Operations
+// ============================================
+
+/**
+ * 🦄 UNICORN: 重新啟用 Submission（CANCELLED → ACTIVE）
+ * Owner 可以重新啟用被取消的 submission（非 locked）
+ */
+export const reactivateSubmission = functions
+  .region('asia-east1')
+  .https.onRequest((req, res) => {
+    corsHandler(req, res, async () => {
+      if (req.method !== 'POST') {
+        res.status(405).json({ error: 'Method not allowed' })
+        return
+      }
+      
+      const user = await verifyIdToken(req)
+      if (!user) {
+        res.status(401).json({ error: 'Unauthorized' })
+        return
+      }
+      
+      try {
+        const { submissionId } = req.body
+        
+        if (!submissionId) {
+          res.status(400).json({ error: 'Missing submissionId' })
+          return
+        }
+        
+        const db = admin.firestore()
+        const submissionRef = db.collection('submissions').doc(submissionId)
+        const submissionDoc = await submissionRef.get()
+        
+        if (!submissionDoc.exists) {
+          res.status(404).json({ error: 'Submission not found' })
+          return
+        }
+        
+        const submissionData = submissionDoc.data()!
+        
+        // 🦄 UNICORN: 權限檢查 - 只有 owner 可以重新啟用
+        if (submissionData._submitterEmail !== user.email) {
+          res.status(403).json({ error: 'Only owner can reactivate submission' })
+          return
+        }
+        
+        // 🦄 UNICORN: 狀態檢查 - 只有 CANCELLED 且未 locked 可以重新啟用
+        if (submissionData._status !== 'CANCELLED') {
+          res.status(400).json({ 
+            error: 'Can only reactivate CANCELLED submissions',
+            currentStatus: submissionData._status
+          })
+          return
+        }
+        
+        if (submissionData._isLocked) {
+          res.status(400).json({ error: 'Cannot reactivate locked submission' })
+          return
+        }
+        
+        const now = admin.firestore.FieldValue.serverTimestamp()
+        
+        await submissionRef.update({
+          _status: 'ACTIVE',
+          updatedAt: now
+        })
+        
+        // 🦄 UNICORN: 寫入 audit log
+        await db.collection('auditLogs').add({
+          action: 'REACTIVATE_SUBMISSION',
+          targetCollection: 'submissions',
+          targetId: submissionId,
+          performedBy: user.email,
+          performedAt: now,
+          metadata: {
+            templateId: submissionData._templateId,
+            previousStatus: 'CANCELLED'
+          }
+        })
+        
+        console.log(`Submission ${submissionId} reactivated by ${user.email}`)
+        
+        res.status(200).json({ 
+          success: true,
+          message: 'Submission reactivated successfully'
+        })
+        
+      } catch (error: any) {
+        console.error('Reactivate submission failed:', error)
+        res.status(500).json({ 
+          error: 'Reactivate failed', 
+          message: error.message 
+        })
+      }
+    })
+  })
+
+/**
+ * 🦄 UNICORN: 鎖定 Submission（ACTIVE → LOCKED）
+ * Owner 或 Superuser 可以鎖定 submission
+ */
+export const lockSubmission = functions
+  .region('asia-east1')
+  .https.onRequest((req, res) => {
+    corsHandler(req, res, async () => {
+      if (req.method !== 'POST') {
+        res.status(405).json({ error: 'Method not allowed' })
+        return
+      }
+      
+      const user = await verifyIdToken(req)
+      if (!user) {
+        res.status(401).json({ error: 'Unauthorized' })
+        return
+      }
+      
+      try {
+        const { submissionId } = req.body
+        
+        if (!submissionId) {
+          res.status(400).json({ error: 'Missing submissionId' })
+          return
+        }
+        
+        const db = admin.firestore()
+        const submissionRef = db.collection('submissions').doc(submissionId)
+        const submissionDoc = await submissionRef.get()
+        
+        if (!submissionDoc.exists) {
+          res.status(404).json({ error: 'Submission not found' })
+          return
+        }
+        
+        const submissionData = submissionDoc.data()!
+        
+        // 🦄 UNICORN: 權限檢查 - Owner 或 Superuser
+        const canLock = submissionData._submitterEmail === user.email || isSuperuserEmail(user.email)
+        if (!canLock) {
+          res.status(403).json({ error: 'Only owner or superuser can lock submission' })
+          return
+        }
+        
+        // 🦄 UNICORN: 狀態檢查 - 只有 ACTIVE 可以鎖定
+        if (submissionData._status !== 'ACTIVE') {
+          res.status(400).json({ 
+            error: 'Can only lock ACTIVE submissions',
+            currentStatus: submissionData._status
+          })
+          return
+        }
+        
+        const now = admin.firestore.FieldValue.serverTimestamp()
+        
+        await submissionRef.update({
+          _status: 'LOCKED',
+          _isLocked: true,
+          _lockedAt: now,
+          _lockedBy: user.email,
+          updatedAt: now
+        })
+        
+        // 🦄 UNICORN: 寫入 audit log
+        await db.collection('auditLogs').add({
+          action: 'LOCK_SUBMISSION',
+          targetCollection: 'submissions',
+          targetId: submissionId,
+          performedBy: user.email,
+          performedAt: now,
+          metadata: {
+            templateId: submissionData._templateId,
+            isSuperuser: isSuperuserEmail(user.email)
+          }
+        })
+        
+        console.log(`Submission ${submissionId} locked by ${user.email}`)
+        
+        res.status(200).json({ 
+          success: true,
+          message: 'Submission locked successfully'
+        })
+        
+      } catch (error: any) {
+        console.error('Lock submission failed:', error)
+        res.status(500).json({ 
+          error: 'Lock failed', 
+          message: error.message 
+        })
+      }
+    })
+  })
+
+/**
+ * 🦄 UNICORN: 解鎖 Submission（LOCKED → ACTIVE）
+ * 只有 Superuser 可以解鎖，並記錄警告
+ */
+export const unlockSubmission = functions
+  .region('asia-east1')
+  .https.onRequest((req, res) => {
+    corsHandler(req, res, async () => {
+      if (req.method !== 'POST') {
+        res.status(405).json({ error: 'Method not allowed' })
+        return
+      }
+      
+      const user = await verifyIdToken(req)
+      if (!user) {
+        res.status(401).json({ error: 'Unauthorized' })
+        return
+      }
+      
+      // 🦄 UNICORN: 權限檢查 - 只有 Superuser
+      if (!isSuperuserEmail(user.email)) {
+        res.status(403).json({ error: 'Only superuser can unlock submission' })
+        return
+      }
+      
+      try {
+        const { submissionId } = req.body
+        
+        if (!submissionId) {
+          res.status(400).json({ error: 'Missing submissionId' })
+          return
+        }
+        
+        const db = admin.firestore()
+        const submissionRef = db.collection('submissions').doc(submissionId)
+        const submissionDoc = await submissionRef.get()
+        
+        if (!submissionDoc.exists) {
+          res.status(404).json({ error: 'Submission not found' })
+          return
+        }
+        
+        const submissionData = submissionDoc.data()!
+        
+        // 🦄 UNICORN: 狀態檢查 - 只有 LOCKED 可以解鎖
+        if (submissionData._status !== 'LOCKED') {
+          res.status(400).json({ 
+            error: 'Can only unlock LOCKED submissions',
+            currentStatus: submissionData._status
+          })
+          return
+        }
+        
+        const now = admin.firestore.FieldValue.serverTimestamp()
+        
+        await submissionRef.update({
+          _status: 'ACTIVE',
+          _isLocked: false,
+          updatedAt: now
+        })
+        
+        // 🦄 UNICORN: 寫入 audit log（含警告標記）
+        await db.collection('auditLogs').add({
+          action: 'UNLOCK_SUBMISSION',
+          targetCollection: 'submissions',
+          targetId: submissionId,
+          performedBy: user.email,
+          performedAt: now,
+          metadata: {
+            templateId: submissionData._templateId,
+            warning: 'Unlocked a LOCKED submission - should use reverse/correction if processed'
+          }
+        })
+        
+        console.log(`Submission ${submissionId} unlocked by ${user.email} (WARNING)`)
+        
+        res.status(200).json({ 
+          success: true,
+          message: 'Submission unlocked successfully',
+          warning: 'If this submission was already processed, you should have used reverse/correction instead'
+        })
+        
+      } catch (error: any) {
+        console.error('Unlock submission failed:', error)
+        res.status(500).json({ 
+          error: 'Unlock failed', 
+          message: error.message 
+        })
+      }
+    })
+  })
+
+/**
+ * 🦄 UNICORN: 創建沖銷 Submission
+ * Owner 或 Superuser 可以為 LOCKED submission 創建 reverse
+ * 🚨 CRITICAL: 不修改原始 LOCKED submission
+ */
+export const createReverseSubmission = functions
+  .region('asia-east1')
+  .https.onRequest((req, res) => {
+    corsHandler(req, res, async () => {
+      if (req.method !== 'POST') {
+        res.status(405).json({ error: 'Method not allowed' })
+        return
+      }
+      
+      const user = await verifyIdToken(req)
+      if (!user) {
+        res.status(401).json({ error: 'Unauthorized' })
+        return
+      }
+      
+      try {
+        const { targetSubmissionId, modifiedData } = req.body
+        
+        if (!targetSubmissionId) {
+          res.status(400).json({ error: 'Missing targetSubmissionId' })
+          return
+        }
+        
+        const db = admin.firestore()
+        const targetRef = db.collection('submissions').doc(targetSubmissionId)
+        const targetDoc = await targetRef.get()
+        
+        if (!targetDoc.exists) {
+          res.status(404).json({ error: 'Target submission not found' })
+          return
+        }
+        
+        const targetData = targetDoc.data()!
+        
+        // 🦄 UNICORN: 權限檢查 - Owner 或 Superuser
+        const canCreate = targetData._submitterEmail === user.email || isSuperuserEmail(user.email)
+        if (!canCreate) {
+          res.status(403).json({ error: 'Only owner or superuser can create reverse' })
+          return
+        }
+        
+        // 🦄 UNICORN: 狀態檢查 - 只有 LOCKED 可以創建 reverse
+        if (targetData._status !== 'LOCKED') {
+          res.status(400).json({ 
+            error: 'Can only create reverse for LOCKED submissions',
+            currentStatus: targetData._status
+          })
+          return
+        }
+        
+        // 🦄 UNICORN: 約束檢查 - 不能有現存的 ACTIVE reverse
+        const existingReverse = await db.collection('submissions')
+          .where('_reverseOf', '==', targetSubmissionId)
+          .where('_status', '==', 'ACTIVE')
+          .limit(1)
+          .get()
+        
+        if (!existingReverse.empty) {
+          res.status(400).json({ 
+            error: 'An active reverse submission already exists for this submission',
+            existingReverseId: existingReverse.docs[0].id
+          })
+          return
+        }
+        
+        const now = admin.firestore.FieldValue.serverTimestamp()
+        
+        // 🦄 UNICORN: 創建新 submission（不修改原始）
+        const newSubmission: any = {
+          ...modifiedData,
+          _templateId: targetData._templateId,
+          _templateModule: targetData._templateModule,
+          _templateAction: targetData._templateAction,
+          _templateVersion: targetData._templateVersion,
+          _submitterId: user.uid || targetData._submitterId,
+          _submitterEmail: user.email,
+          _submittedAt: now,
+          _submittedMonth: new Date().toISOString().slice(0, 7),
+          _status: 'ACTIVE',
+          _reverseOf: targetSubmissionId,  // 🦄 只有新文檔有這個欄位
+          _fieldLabels: targetData._fieldLabels,
+          _optionLabels: targetData._optionLabels,
+          files: modifiedData.files || [],
+          createdAt: now,
+          updatedAt: now
+        }
+        
+        const newRef = await db.collection('submissions').add(newSubmission)
+        
+        // 🦄 UNICORN: 寫入 audit log
+        await db.collection('auditLogs').add({
+          action: 'CREATE_REVERSE_SUBMISSION',
+          targetCollection: 'submissions',
+          targetId: newRef.id,
+          performedBy: user.email,
+          performedAt: now,
+          metadata: {
+            reverseOf: targetSubmissionId,
+            templateId: targetData._templateId,
+            isSuperuser: isSuperuserEmail(user.email)
+          }
+        })
+        
+        console.log(`Reverse submission ${newRef.id} created for ${targetSubmissionId} by ${user.email}`)
+        
+        res.status(200).json({ 
+          success: true,
+          message: 'Reverse submission created successfully',
+          newSubmissionId: newRef.id
+        })
+        
+      } catch (error: any) {
+        console.error('Create reverse submission failed:', error)
+        res.status(500).json({ 
+          error: 'Create reverse failed', 
+          message: error.message 
+        })
+      }
+    })
+  })
+
+/**
+ * 🦄 UNICORN: 創建更正 Submission
+ * Owner 或 Superuser 可以為 LOCKED submission 創建 correction
+ * 🚨 CRITICAL: 不修改原始 LOCKED submission
+ */
+export const createCorrectionSubmission = functions
+  .region('asia-east1')
+  .https.onRequest((req, res) => {
+    corsHandler(req, res, async () => {
+      if (req.method !== 'POST') {
+        res.status(405).json({ error: 'Method not allowed' })
+        return
+      }
+      
+      const user = await verifyIdToken(req)
+      if (!user) {
+        res.status(401).json({ error: 'Unauthorized' })
+        return
+      }
+      
+      try {
+        const { targetSubmissionId, modifiedData } = req.body
+        
+        if (!targetSubmissionId) {
+          res.status(400).json({ error: 'Missing targetSubmissionId' })
+          return
+        }
+        
+        const db = admin.firestore()
+        const targetRef = db.collection('submissions').doc(targetSubmissionId)
+        const targetDoc = await targetRef.get()
+        
+        if (!targetDoc.exists) {
+          res.status(404).json({ error: 'Target submission not found' })
+          return
+        }
+        
+        const targetData = targetDoc.data()!
+        
+        // 🦄 UNICORN: 權限檢查 - Owner 或 Superuser
+        const canCreate = targetData._submitterEmail === user.email || isSuperuserEmail(user.email)
+        if (!canCreate) {
+          res.status(403).json({ error: 'Only owner or superuser can create correction' })
+          return
+        }
+        
+        // 🦄 UNICORN: 狀態檢查 - 只有 LOCKED 可以創建 correction
+        if (targetData._status !== 'LOCKED') {
+          res.status(400).json({ 
+            error: 'Can only create correction for LOCKED submissions',
+            currentStatus: targetData._status
+          })
+          return
+        }
+        
+        // 🦄 UNICORN: 約束檢查 - 不能有現存的 ACTIVE correction
+        const existingCorrection = await db.collection('submissions')
+          .where('_correctFor', '==', targetSubmissionId)
+          .where('_status', '==', 'ACTIVE')
+          .limit(1)
+          .get()
+        
+        if (!existingCorrection.empty) {
+          res.status(400).json({ 
+            error: 'An active correction submission already exists for this submission',
+            existingCorrectionId: existingCorrection.docs[0].id
+          })
+          return
+        }
+        
+        const now = admin.firestore.FieldValue.serverTimestamp()
+        
+        // 🦄 UNICORN: 創建新 submission（不修改原始）
+        const newSubmission: any = {
+          ...modifiedData,
+          _templateId: targetData._templateId,
+          _templateModule: targetData._templateModule,
+          _templateAction: targetData._templateAction,
+          _templateVersion: targetData._templateVersion,
+          _submitterId: user.uid || targetData._submitterId,
+          _submitterEmail: user.email,
+          _submittedAt: now,
+          _submittedMonth: new Date().toISOString().slice(0, 7),
+          _status: 'ACTIVE',
+          _correctFor: targetSubmissionId,  // 🦄 只有新文檔有這個欄位
+          _fieldLabels: targetData._fieldLabels,
+          _optionLabels: targetData._optionLabels,
+          files: modifiedData.files || [],
+          createdAt: now,
+          updatedAt: now
+        }
+        
+        const newRef = await db.collection('submissions').add(newSubmission)
+        
+        // 🦄 UNICORN: 寫入 audit log
+        await db.collection('auditLogs').add({
+          action: 'CREATE_CORRECTION_SUBMISSION',
+          targetCollection: 'submissions',
+          targetId: newRef.id,
+          performedBy: user.email,
+          performedAt: now,
+          metadata: {
+            correctFor: targetSubmissionId,
+            templateId: targetData._templateId,
+            isSuperuser: isSuperuserEmail(user.email)
+          }
+        })
+        
+        console.log(`Correction submission ${newRef.id} created for ${targetSubmissionId} by ${user.email}`)
+        
+        res.status(200).json({ 
+          success: true,
+          message: 'Correction submission created successfully',
+          newSubmissionId: newRef.id
+        })
+        
+      } catch (error: any) {
+        console.error('Create correction submission failed:', error)
+        res.status(500).json({ 
+          error: 'Create correction failed', 
+          message: error.message 
+        })
+      }
+    })
+  })
+
+/**
+ * 🦄 UNICORN: 回報 Submission 問題
+ * 用戶可以對 LOCKED submission 回報問題，發送郵件給 owner 和 managers
+ */
+export const reportSubmissionIssue = functions
+  .region('asia-east1')
+  .https.onRequest((req, res) => {
+    corsHandler(req, res, async () => {
+      if (req.method !== 'POST') {
+        res.status(405).json({ error: 'Method not allowed' })
+        return
+      }
+      
+      const user = await verifyIdToken(req)
+      if (!user) {
+        res.status(401).json({ error: 'Unauthorized' })
+        return
+      }
+      
+      try {
+        const { submissionId, issueDescription } = req.body
+        
+        if (!submissionId || !issueDescription) {
+          res.status(400).json({ error: 'Missing submissionId or issueDescription' })
+          return
+        }
+        
+        const db = admin.firestore()
+        const submissionRef = db.collection('submissions').doc(submissionId)
+        const submissionDoc = await submissionRef.get()
+        
+        if (!submissionDoc.exists) {
+          res.status(404).json({ error: 'Submission not found' })
+          return
+        }
+        
+        const submissionData = submissionDoc.data()!
+        
+        // 🦄 UNICORN: 狀態檢查 - 只能回報 LOCKED submission
+        if (submissionData._status !== 'LOCKED') {
+          res.status(400).json({ 
+            error: 'Can only report issues for LOCKED submissions',
+            currentStatus: submissionData._status
+          })
+          return
+        }
+        
+        const now = admin.firestore.FieldValue.serverTimestamp()
+        
+        // TODO: 實作郵件發送邏輯
+        // 這裡應該使用 SendGrid 或其他郵件服務
+        // 發送給 submissionData._submitterEmail 和 template managers
+        
+        console.log(`Issue reported for submission ${submissionId} by ${user.email}`)
+        console.log(`Issue: ${issueDescription}`)
+        console.log(`Should notify: ${submissionData._submitterEmail}`)
+        
+        // 🦄 UNICORN: 寫入 audit log
+        await db.collection('auditLogs').add({
+          action: 'REPORT_SUBMISSION_ISSUE',
+          targetCollection: 'submissions',
+          targetId: submissionId,
+          performedBy: user.email,
+          performedAt: now,
+          metadata: {
+            templateId: submissionData._templateId,
+            issueDescription,
+            notifiedEmail: submissionData._submitterEmail
+          }
+        })
+        
+        res.status(200).json({ 
+          success: true,
+          message: 'Issue reported successfully. Owner will be notified.'
+        })
+        
+      } catch (error: any) {
+        console.error('Report issue failed:', error)
+        res.status(500).json({ 
+          error: 'Report failed', 
+          message: error.message 
+        })
+      }
+    })
+  })
+
+// ============================================
+// 🦄 UNICORN: User Stats and Request Management
+// ============================================
+
+/**
+ * 🦄 UNICORN: Submission 創建時自動更新用戶統計
+ * Write-time decision: useCount 和 lastUsedAt 在提交時計算
+ */
+export const onSubmissionCreated = functions
+  .region('asia-east1')
+  .firestore.document('submissions/{submissionId}')
+  .onCreate(async (snap, context) => {
+    const submissionData = snap.data()
+    const db = admin.firestore()
+    
+    try {
+      const userEmail = submissionData._submitterEmail
+      const templateId = submissionData._templateId
+      const templateName = submissionData._templateName || 'Unknown Template'
+      
+      // 🦄 UNICORN: statsId = userEmail_templateId
+      const statsId = `${userEmail}_${templateId}`
+      const statsRef = db.collection('userFormStats').doc(statsId)
+      const statsDoc = await statsRef.get()
+      
+      const now = admin.firestore.FieldValue.serverTimestamp()
+      
+      if (statsDoc.exists) {
+        // 更新現有統計
+        await statsRef.update({
+          useCount: admin.firestore.FieldValue.increment(1),
+          lastUsedAt: now
+        })
+      } else {
+        // 創建新統計
+        await statsRef.set({
+          userEmail,
+          templateId,
+          templateName,
+          useCount: 1,
+          lastUsedAt: now,
+          isFavorite: false
+        })
+      }
+      
+      console.log(`Updated userFormStats for ${userEmail} - ${templateId}`)
+      
+    } catch (error: any) {
+      console.error('Update userFormStats failed:', error)
+      // 不拋出錯誤，避免阻擋 submission 創建
+    }
+  })
+
+/**
+ * 🦄 UNICORN: 處理表格權限申請
+ * Superuser 或表格 Owner/Manager 可以審核
+ */
+export const processFormAccessRequest = functions
+  .region('asia-east1')
+  .https.onRequest((req, res) => {
+    corsHandler(req, res, async () => {
+      if (req.method !== 'POST') {
+        res.status(405).json({ error: 'Method not allowed' })
+        return
+      }
+      
+      const user = await verifyIdToken(req)
+      if (!user) {
+        res.status(401).json({ error: 'Unauthorized' })
+        return
+      }
+      
+      try {
+        const { requestId, action } = req.body
+        
+        if (!requestId || !action) {
+          res.status(400).json({ error: 'Missing requestId or action' })
+          return
+        }
+        
+        if (!['approve', 'reject'].includes(action)) {
+          res.status(400).json({ error: 'Invalid action' })
+          return
+        }
+        
+        const db = admin.firestore()
+        const requestRef = db.collection('formAccessRequests').doc(requestId)
+        const requestDoc = await requestRef.get()
+        
+        if (!requestDoc.exists) {
+          res.status(404).json({ error: 'Request not found' })
+          return
+        }
+        
+        const requestData = requestDoc.data()!
+        
+        // 🦄 UNICORN: 權限檢查 - Superuser 或 Owner/Manager
+        const canProcess = isSuperuserEmail(user.email) ||
+                          requestData.ownerEmail === user.email ||
+                          (requestData.managerEmails || []).includes(user.email)
+        
+        if (!canProcess) {
+          res.status(403).json({ error: 'You do not have permission to process this request' })
+          return
+        }
+        
+        if (requestData.status !== 'pending') {
+          res.status(400).json({ 
+            error: 'Request already processed',
+            currentStatus: requestData.status
+          })
+          return
+        }
+        
+        const now = admin.firestore.FieldValue.serverTimestamp()
+        const batch = db.batch()
+        
+        // Update request status
+        batch.update(requestRef, {
+          status: action === 'approve' ? 'approved' : 'rejected',
+          reviewedAt: now,
+          reviewedBy: user.email,
+          _notifiedAt: now  // 🦄 UNICORN: Idempotency
+        })
+        
+        // If approved, add to template's accessWhitelist
+        if (action === 'approve') {
+          const templateRef = db.collection('templates').doc(requestData.templateId)
+          const templateDoc = await templateRef.get()
+          
+          if (templateDoc.exists) {
+            const templateData = templateDoc.data()!
+            const currentWhitelist = templateData.accessWhitelist || []
+            
+            if (!currentWhitelist.includes(requestData.requesterEmail)) {
+              batch.update(templateRef, {
+                accessWhitelist: [...currentWhitelist, requestData.requesterEmail],
+                updatedAt: now
+              })
+            }
+          }
+        }
+        
+        // 🦄 UNICORN: Audit log
+        const auditRef = db.collection('auditLogs').doc()
+        batch.set(auditRef, {
+          action: `FORM_ACCESS_REQUEST_${action.toUpperCase()}`,
+          targetCollection: 'formAccessRequests',
+          targetId: requestId,
+          performedBy: user.email,
+          performedAt: now,
+          metadata: {
+            templateId: requestData.templateId,
+            requesterEmail: requestData.requesterEmail,
+            isSuperuser: isSuperuserEmail(user.email)
+          }
+        })
+        
+        await batch.commit()
+        
+        console.log(`Form access request ${requestId} ${action}ed by ${user.email}`)
+        
+        res.status(200).json({ 
+          success: true,
+          message: `Request ${action}ed successfully`
+        })
+        
+      } catch (error: any) {
+        console.error('Process request failed:', error)
+        res.status(500).json({ 
+          error: 'Process failed', 
+          message: error.message 
+        })
+      }
+    })
+  })
+
+/**
+ * 🦄 UNICORN: 審核表格建議
+ * Superuser 或表格 Owner 可以審核
+ */
+export const reviewTemplateSuggestion = functions
+  .region('asia-east1')
+  .https.onRequest((req, res) => {
+    corsHandler(req, res, async () => {
+      if (req.method !== 'POST') {
+        res.status(405).json({ error: 'Method not allowed' })
+        return
+      }
+      
+      const user = await verifyIdToken(req)
+      if (!user) {
+        res.status(401).json({ error: 'Unauthorized' })
+        return
+      }
+      
+      try {
+        const { suggestionId, status, reviewNote } = req.body
+        
+        if (!suggestionId || !status) {
+          res.status(400).json({ error: 'Missing suggestionId or status' })
+          return
+        }
+        
+        if (!['reviewed', 'implemented'].includes(status)) {
+          res.status(400).json({ error: 'Invalid status' })
+          return
+        }
+        
+        const db = admin.firestore()
+        const suggestionRef = db.collection('templateSuggestions').doc(suggestionId)
+        const suggestionDoc = await suggestionRef.get()
+        
+        if (!suggestionDoc.exists) {
+          res.status(404).json({ error: 'Suggestion not found' })
+          return
+        }
+        
+        const suggestionData = suggestionDoc.data()!
+        
+        // Get template to check ownership
+        const templateRef = db.collection('templates').doc(suggestionData.templateId)
+        const templateDoc = await templateRef.get()
+        
+        if (!templateDoc.exists) {
+          res.status(404).json({ error: 'Template not found' })
+          return
+        }
+        
+        const templateData = templateDoc.data()!
+        
+        // 🦄 UNICORN: 權限檢查 - Superuser 或 Owner
+        const canReview = isSuperuserEmail(user.email) || templateData.createdBy === user.email
+        
+        if (!canReview) {
+          res.status(403).json({ error: 'Only template owner or superuser can review suggestions' })
+          return
+        }
+        
+        if (suggestionData.status !== 'pending') {
+          res.status(400).json({ 
+            error: 'Suggestion already reviewed',
+            currentStatus: suggestionData.status
+          })
+          return
+        }
+        
+        const now = admin.firestore.FieldValue.serverTimestamp()
+        
+        await suggestionRef.update({
+          status,
+          reviewedAt: now,
+          reviewedBy: user.email,
+          reviewNote: reviewNote || null,
+          _notifiedAt: now  // 🦄 UNICORN: Idempotency
+        })
+        
+        // 🦄 UNICORN: Audit log
+        await db.collection('auditLogs').add({
+          action: 'TEMPLATE_SUGGESTION_REVIEWED',
+          targetCollection: 'templateSuggestions',
+          targetId: suggestionId,
+          performedBy: user.email,
+          performedAt: now,
+          metadata: {
+            templateId: suggestionData.templateId,
+            suggesterEmail: suggestionData.suggesterEmail,
+            newStatus: status,
+            isSuperuser: isSuperuserEmail(user.email)
+          }
+        })
+        
+        console.log(`Template suggestion ${suggestionId} reviewed by ${user.email}`)
+        
+        res.status(200).json({ 
+          success: true,
+          message: 'Suggestion reviewed successfully'
+        })
+        
+      } catch (error: any) {
+        console.error('Review suggestion failed:', error)
+        res.status(500).json({ 
+          error: 'Review failed', 
+          message: error.message 
+        })
+      }
+    })
+  })

@@ -473,18 +473,25 @@ export default function LeaderDraftTemplatesPage() {
                       {fields.map((field, index) => (
                         <div key={index} className="flex items-center gap-2 p-3 bg-slate-900 rounded-lg">
                           <span className="text-slate-500 text-sm w-6">{index + 1}</span>
-                          <select
-                            value={field.key}
-                            onChange={(e) => updateField(index, { key: e.target.value as UniversalKey })}
-                            className="w-32 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm font-mono"
-                          >
-                            <option value="">選擇 KEY</option>
-                            {Object.entries(UNIVERSAL_KEYS).map(([key, config]) => (
-                              <option key={key} value={key}>
-                                {key}
-                              </option>
-                            ))}
-                          </select>
+                          {/* 🦄 UNICORN: KEY 選擇 - dropdown 類型自動從 optionSet.code 取得 */}
+                          {field.type === 'dropdown' ? (
+                            <div className="w-32 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-slate-300 text-sm font-mono">
+                              {field.key || '(自動)'}
+                            </div>
+                          ) : (
+                            <select
+                              value={field.key}
+                              onChange={(e) => updateField(index, { key: e.target.value as UniversalKey })}
+                              className="w-32 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm font-mono"
+                            >
+                              <option value="">選擇 KEY</option>
+                              {Object.entries(UNIVERSAL_KEYS).map(([key, config]) => (
+                                <option key={key} value={key}>
+                                  {key}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                           <input
                             type="text"
                             value={field.label}
@@ -494,7 +501,16 @@ export default function LeaderDraftTemplatesPage() {
                           />
                           <select
                             value={field.type}
-                            onChange={(e) => updateField(index, { type: e.target.value as any })}
+                            onChange={(e) => {
+                              const newType = e.target.value as any
+                              // 🦄 UNICORN: 切換離開 dropdown 時清除 optionSetId
+                              if (newType !== 'dropdown') {
+                                updateField(index, { type: newType, optionSetId: undefined })
+                              } else {
+                                // 切換到 dropdown 時清除 key（等待選擇 optionSet）
+                                updateField(index, { type: newType, key: '' as UniversalKey })
+                              }
+                            }}
                             className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm"
                           >
                             {fieldTypes.map(t => (
@@ -504,12 +520,22 @@ export default function LeaderDraftTemplatesPage() {
                           {field.type === 'dropdown' && (
                             <select
                               value={field.optionSetId || ''}
-                              onChange={(e) => updateField(index, { optionSetId: e.target.value })}
+                              onChange={(e) => {
+                                const selectedSetId = e.target.value
+                                const selectedSet = availableOptionSets.find(os => os.id === selectedSetId)
+                                // 🦄 UNICORN: 自動使用 optionSet.code 作為 field key
+                                updateField(index, { 
+                                  optionSetId: selectedSetId,
+                                  key: (selectedSet?.code || '') as UniversalKey
+                                })
+                              }}
                               className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm"
                             >
                               <option value="">選擇選項池</option>
                               {availableOptionSets.map(os => (
-                                <option key={os.id} value={os.id}>{os.name}</option>
+                                <option key={os.id} value={os.id}>
+                                  {os.name} {os.code && `[${os.code}]`}
+                                </option>
                               ))}
                             </select>
                           )}

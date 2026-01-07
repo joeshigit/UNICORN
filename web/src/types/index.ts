@@ -4,6 +4,11 @@
 // ============================================
 
 // ============================================
+// 🦄 UNICORN: Superuser Emails
+// ============================================
+export const SUPERUSER_EMAILS = ['tong@dbyv.org', 'jason@dbyv.org', 'joeshi@dbyv.org']
+
+// ============================================
 // 🦄 UNICORN: Universal Keys
 // 這些是系統固定的欄位 KEY，Leader 只能從中選擇
 // KEY 跨所有表格統一，但 LABEL 可以不同
@@ -151,7 +156,7 @@ export interface FileInfo {
 
 // ---------- Submission（提交資料）----------
 // 🦄 UNICORN: Universal KEY 設計
-export type SubmissionStatus = 'ACTIVE' | 'CANCELLED'
+export type SubmissionStatus = 'ACTIVE' | 'CANCELLED' | 'LOCKED'
 
 export interface Submission {
   id?: string
@@ -166,6 +171,13 @@ export interface Submission {
   _submittedAt: Date | string
   _submittedMonth: string              // 🦄 UNICORN: Period key (YYYY-MM)
   _status: SubmissionStatus
+  
+  // 🦄 UNICORN: Submission workflow fields
+  _isLocked?: boolean
+  _lockedAt?: Date | string
+  _lockedBy?: string
+  _reverseOf?: string
+  _correctFor?: string
   
   // ===== 用戶資料（Universal KEY: VALUE）=====
   // 動態欄位，key 是 UniversalKey，value 是標準化的值
