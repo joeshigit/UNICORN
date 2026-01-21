@@ -9,52 +9,46 @@
 export const SUPERUSER_EMAILS = ['tong@dbyv.org', 'jason@dbyv.org', 'joeshi@dbyv.org']
 
 // ============================================
-// 🦄 UNICORN: Universal Keys
-// 這些是系統固定的欄位 KEY，Leader 只能從中選擇
+// 🦄 UNICORN: Fixed Keys（固定欄位 KEY）
+// 這些是系統固定的欄位 KEY，不可由使用者新增
 // KEY 跨所有表格統一，但 LABEL 可以不同
 // ============================================
 
-export const UNIVERSAL_KEYS = {
-  // OptionSet 類型（值來自選項池）
-  school: { type: 'optionSet', description: '學校' },
-  service: { type: 'optionSet', description: '服務類型' },
-  project: { type: 'optionSet', description: '項目' },
-  format: { type: 'optionSet', description: '格式' },
-  action: { type: 'optionSet', description: '動作類型' },
-  department: { type: 'optionSet', description: '部門' },
-  status: { type: 'optionSet', description: '狀態' },
-  category: { type: 'optionSet', description: '分類' },
-  
-  // DateTime 類型（格式：yyyymmdd hh:mm）
-  startDateTime: { type: 'datetime', description: '開始時間' },
-  endDateTime: { type: 'datetime', description: '結束時間' },
-  
+export const FIXED_KEYS = {
   // Number 類型
-  quantity1: { type: 'number', description: '數量1' },
-  quantity2: { type: 'number', description: '數量2' },
-  quantity3: { type: 'number', description: '數量3' },
-  amount1: { type: 'number', description: '金額1' },
-  amount2: { type: 'number', description: '金額2' },
+  quantity1: { type: 'number', label: '數量A' },
+  quantity2: { type: 'number', label: '數量B' },
+  quantity3: { type: 'number', label: '數量C' },
   
   // Text 類型（單行）
-  notes1: { type: 'text', description: '備註1（單行）' },
-  title: { type: 'text', description: '標題' },
-  name: { type: 'text', description: '名稱' },
+  title: { type: 'text', label: '單行文字' },
   
   // Textarea 類型（多行）
-  notes2: { type: 'textarea', description: '備註2（多行）' },
-  description: { type: 'textarea', description: '描述' },
-  content: { type: 'textarea', description: '內容' },
+  note: { type: 'textarea', label: '多行文字' },
+  
+  // DateTime 類型（格式：yyyymmdd hh:mm）
+  dateTimeStart: { type: 'datetime', label: '開始日期時間' },
+  dateTimeEnd: { type: 'datetime', label: '結束日期時間' },
+  
+  // Date 類型（只有日期）
+  dateOnlyStart: { type: 'date', label: '開始日期' },
+  dateOnlyEnd: { type: 'date', label: '結束日期' },
   
   // File 類型
-  attachment: { type: 'file', description: '附件' },
-  documents: { type: 'file', description: '文件' },
-  
-  // Reference 類型
-  reference: { type: 'reference', description: '引用' },
+  upload: { type: 'file', label: '檔案上傳' },
 } as const
 
-export type UniversalKey = keyof typeof UNIVERSAL_KEYS
+export type FixedKey = keyof typeof FIXED_KEYS
+
+// ============================================
+// 🦄 UNICORN: OptionSet Keys（動態欄位 KEY）
+// 這些 KEY 來自 Firestore optionSets 的 code 欄位
+// Superuser 可以透過新增 OptionSet 來增加新的 KEY
+// ============================================
+// 不在此定義，由 Firestore 動態提供
+
+// 向後相容：UniversalKey 包含 FixedKey 和動態的 OptionSet codes
+export type UniversalKey = FixedKey | string
 
 // ---------- 欄位型別 ----------
 export type FieldType = 
@@ -180,29 +174,22 @@ export interface Submission {
   _correctFor?: string
   
   // ===== 用戶資料（Universal KEY: VALUE）=====
-  // 動態欄位，key 是 UniversalKey，value 是標準化的值
-  school?: string
-  service?: string
-  project?: string
-  format?: string
-  action?: string
-  department?: string
-  status?: string
-  category?: string
-  startDateTime?: string               // 格式：yyyymmdd hh:mm
-  endDateTime?: string
+  // Fixed Keys（固定欄位）
   quantity1?: number
   quantity2?: number
   quantity3?: number
-  amount1?: number
-  amount2?: number
-  notes1?: string
-  notes2?: string
   title?: string
-  name?: string
-  description?: string
-  content?: string
-  reference?: RefValue
+  note?: string
+  dateTimeStart?: string               // 格式：yyyymmdd hh:mm
+  dateTimeEnd?: string
+  dateOnlyStart?: string               // 格式：yyyymmdd
+  dateOnlyEnd?: string
+  upload?: FileInfo[]
+  
+  // OptionSet Keys（動態欄位，由 optionSets.code 決定）
+  // 例如：school, department, service, project 等
+  // 使用 [key: string] 允許任意 OptionSet code
+  [key: string]: unknown
   
   // ===== 欄位 LABEL 快照（顯示用）=====
   _fieldLabels: Record<string, string>

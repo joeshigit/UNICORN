@@ -1409,3 +1409,34 @@ export async function getMyTemplateSuggestions(userEmail: string): Promise<Templ
     ...doc.data()
   })) as TemplateSuggestion[]
 }
+
+// ============================================
+// 🦄 UNICORN: Seed Module and Action OptionSets
+// ============================================
+
+const SEED_MODULE_ACTION_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net/seedModuleActionOptionSets'
+
+export async function seedModuleActionOptionSets(): Promise<{ module: any; action: any }> {
+  const { auth } = await import('./firebase')
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('請先登入')
+  }
+  const idToken = await user.getIdToken()
+  
+  const response = await fetch(SEED_MODULE_ACTION_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${idToken}`
+    }
+  })
+  
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.message || errorData.error || 'Seed 失敗')
+  }
+  
+  const result = await response.json()
+  return result.results
+}

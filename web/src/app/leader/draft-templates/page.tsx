@@ -9,10 +9,11 @@ import {
   submitTemplateDraftForReview,
   deleteTemplateDraft,
   getOptionSets,
-  getMyOptionSetDrafts
+  getMyOptionSetDrafts,
+  seedModuleActionOptionSets
 } from '@/lib/firestore'
-import type { TemplateDraft, DraftStatus, FieldDefinition, OptionSet, OptionSetDraft, UniversalKey } from '@/types'
-import { UNIVERSAL_KEYS } from '@/types'
+import type { TemplateDraft, DraftStatus, FieldDefinition, OptionSet, OptionSetDraft, UniversalKey, FixedKey } from '@/types'
+import { FIXED_KEYS } from '@/types'
 
 const statusConfig: Record<DraftStatus, { label: string; color: string }> = {
   draft: { label: '草稿', color: 'bg-slate-500/20 text-slate-400' },
@@ -22,14 +23,25 @@ const statusConfig: Record<DraftStatus, { label: string; color: string }> = {
 }
 
 const fieldTypes = [
-  { value: 'text', label: '文字' },
-  { value: 'number', label: '數字' },
-  { value: 'date', label: '日期' },
-  { value: 'datetime', label: '日期時間' },
-  { value: 'dropdown', label: '下拉選單' },
-  { value: 'textarea', label: '多行文字' },
-  { value: 'file', label: '檔案上傳' }
+  { value: 'text', label: '單行文字', keys: ['title'] },
+  { value: 'number', label: '數字', keys: ['quantity1', 'quantity2', 'quantity3'] },
+  { value: 'date', label: '日期', keys: ['dateOnlyStart', 'dateOnlyEnd'] },
+  { value: 'datetime', label: '日期時間', keys: ['dateTimeStart', 'dateTimeEnd'] },
+  { value: 'dropdown', label: '下拉選單', keys: [] }, // KEY 來自 optionSet.code
+  { value: 'textarea', label: '多行文字', keys: ['note'] },
+  { value: 'file', label: '檔案上傳', keys: ['upload'] }
 ]
+
+// 根據欄位類型取得可用的 KEY
+function getKeysForType(type: string): { key: FixedKey; label: string }[] {
+  const fieldType = fieldTypes.find(ft => ft.value === type)
+  if (!fieldType || fieldType.keys.length === 0) return []
+  
+  return fieldType.keys.map(key => ({
+    key: key as FixedKey,
+    label: FIXED_KEYS[key as FixedKey]?.label || key
+  }))
+}
 
 export default function LeaderDraftTemplatesPage() {
   const { user } = useAuth()
@@ -225,6 +237,12 @@ export default function LeaderDraftTemplatesPage() {
       .filter(d => d.status !== 'rejected')
       .map(d => ({ id: d.id!, name: `[草稿] ${d.name}`, code: d.code, isDraft: true }))
   ]
+  
+  // Get module and action OptionSets for template classification
+  const moduleOptionSet = optionSets.find(os => os.code === 'module' && (os.isMaster === true || os.isMaster === undefined))
+  const actionOptionSet = optionSets.find(os => os.code === 'action' && (os.isMaster === true || os.isMaster === undefined))
+  const moduleOptions = moduleOptionSet?.items?.filter(i => i.status === 'active') || []
+  const actionOptions = actionOptionSet?.items?.filter(i => i.status === 'active') || []
 
   return (
     <div className="space-y-6">
@@ -248,6 +266,34 @@ export default function LeaderDraftTemplatesPage() {
           💡 草稿表格可以使用您的「選項池草稿」。審核時，Admin 會一併審核相關的選項池草稿。
         </p>
       </div>
+
+      {/* Seed Module/Action OptionSets if missing */}
+      {!loading && (!moduleOptionSet || !actionOptionSet) && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 flex items-center justify-between">
+          <div>
+            <p className="text-amber-400 text-sm font-medium">
+              ⚠️ 缺少標準選項池
+            </p>
+            <p className="text-amber-400/70 text-xs mt-1">
+              需要建立「模組」和「動作」選項池才能標準化表格分類
+            </p>
+          </div>
+          <button
+            onClick={async () => {
+              try {
+                await seedModuleActionOptionSets()
+                alert('標準選項池已建立！')
+                await loadAll()
+              } catch (error: any) {
+                alert('建立失敗: ' + error.message)
+              }
+            }}
+            className="px-4 py-2 bg-amber-500 text-slate-900 rounded-lg hover:bg-amber-400 transition-colors font-medium text-sm"
+          >
+            建立標準選項池
+          </button>
+        </div>
+      )}
 
       {/* List */}
       {loading ? (
@@ -372,23 +418,53 @@ export default function LeaderDraftTemplatesPage() {
                   </div>
                   <div>
                     <label className="block text-sm text-slate-400 mb-2">模組 *</label>
-                    <input
-                      type="text"
-                      value={moduleId}
-                      onChange={(e) => setModuleId(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none"
-                      placeholder="例如：hr、finance"
-                    />
+                    {moduleOptions.length > 0 ? (
+                      <select
+                        value={moduleId}
+                        onChange={(e) => setModuleId(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-amber-500 focus:outline-none"
+                      >
+                        <option value="">選擇模組</option>
+                        {moduleOptions.map(opt => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label} ({opt.value})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={moduleId}
+                        onChange={(e) => setModuleId(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none"
+                        placeholder="請先建立 module OptionSet"
+                      />
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm text-slate-400 mb-2">動作 *</label>
-                    <input
-                      type="text"
-                      value={actionId}
-                      onChange={(e) => setActionId(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none"
-                      placeholder="例如：leave_request"
-                    />
+                    {actionOptions.length > 0 ? (
+                      <select
+                        value={actionId}
+                        onChange={(e) => setActionId(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-amber-500 focus:outline-none"
+                      >
+                        <option value="">選擇動作</option>
+                        {actionOptions.map(opt => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label} ({opt.value})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={actionId}
+                        onChange={(e) => setActionId(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-amber-500 focus:outline-none"
+                        placeholder="請先建立 action OptionSet"
+                      />
+                    )}
                   </div>
                 </div>
                 
@@ -473,25 +549,8 @@ export default function LeaderDraftTemplatesPage() {
                       {fields.map((field, index) => (
                         <div key={index} className="flex items-center gap-2 p-3 bg-slate-900 rounded-lg">
                           <span className="text-slate-500 text-sm w-6">{index + 1}</span>
-                          {/* 🦄 UNICORN: KEY 選擇 - dropdown 類型自動從 optionSet.code 取得 */}
-                          {field.type === 'dropdown' ? (
-                            <div className="w-32 px-2 py-1 bg-slate-700 border border-slate-600 rounded text-slate-300 text-sm font-mono">
-                              {field.key || '(自動)'}
-                            </div>
-                          ) : (
-                            <select
-                              value={field.key}
-                              onChange={(e) => updateField(index, { key: e.target.value as UniversalKey })}
-                              className="w-32 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm font-mono"
-                            >
-                              <option value="">選擇 KEY</option>
-                              {Object.entries(UNIVERSAL_KEYS).map(([key, config]) => (
-                                <option key={key} value={key}>
-                                  {key}
-                                </option>
-                              ))}
-                            </select>
-                          )}
+                          
+                          {/* 1. 標籤（顯示名稱）*/}
                           <input
                             type="text"
                             value={field.label}
@@ -499,25 +558,37 @@ export default function LeaderDraftTemplatesPage() {
                             className="flex-1 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm"
                             placeholder="標籤（顯示名稱）"
                           />
+                          
+                          {/* 2. 類型（主分類）*/}
                           <select
                             value={field.type}
                             onChange={(e) => {
                               const newType = e.target.value as any
-                              // 🦄 UNICORN: 切換離開 dropdown 時清除 optionSetId
-                              if (newType !== 'dropdown') {
-                                updateField(index, { type: newType, optionSetId: undefined })
+                              const availableKeys = getKeysForType(newType)
+                              
+                              if (newType === 'dropdown') {
+                                // 切換到 dropdown：清除 key（等待選擇 optionSet）
+                                updateField(index, { type: newType, key: '' as UniversalKey, optionSetId: undefined })
                               } else {
-                                // 切換到 dropdown 時清除 key（等待選擇 optionSet）
-                                updateField(index, { type: newType, key: '' as UniversalKey })
+                                // 其他類型：清除 optionSetId，並自動選擇 key（如果只有一個選項）
+                                const autoKey = availableKeys.length === 1 ? availableKeys[0].key : ''
+                                updateField(index, { 
+                                  type: newType, 
+                                  key: autoKey as UniversalKey,
+                                  optionSetId: undefined 
+                                })
                               }
                             }}
-                            className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm"
+                            className="w-28 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm"
                           >
                             {fieldTypes.map(t => (
                               <option key={t.value} value={t.value}>{t.label}</option>
                             ))}
                           </select>
-                          {field.type === 'dropdown' && (
+                          
+                          {/* 3. KEY（根據類型篩選）*/}
+                          {field.type === 'dropdown' ? (
+                            // dropdown: 選擇 optionSet，KEY 自動設定
                             <select
                               value={field.optionSetId || ''}
                               onChange={(e) => {
@@ -529,7 +600,7 @@ export default function LeaderDraftTemplatesPage() {
                                   key: (selectedSet?.code || '') as UniversalKey
                                 })
                               }}
-                              className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm"
+                              className="w-40 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm"
                             >
                               <option value="">選擇選項池</option>
                               {availableOptionSets.map(os => (
@@ -538,8 +609,24 @@ export default function LeaderDraftTemplatesPage() {
                                 </option>
                               ))}
                             </select>
+                          ) : (
+                            // 其他類型: KEY 從 FIXED_KEYS 中根據類型篩選
+                            <select
+                              value={field.key}
+                              onChange={(e) => updateField(index, { key: e.target.value as UniversalKey })}
+                              className="w-40 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-white text-sm"
+                            >
+                              <option value="">選擇 KEY</option>
+                              {getKeysForType(field.type).map(({ key, label }) => (
+                                <option key={key} value={key}>
+                                  {label}
+                                </option>
+                              ))}
+                            </select>
                           )}
-                          <label className="flex items-center gap-1 text-sm">
+                          
+                          {/* 4. 必填 */}
+                          <label className="flex items-center gap-1 text-sm whitespace-nowrap">
                             <input
                               type="checkbox"
                               checked={field.required}
@@ -547,6 +634,8 @@ export default function LeaderDraftTemplatesPage() {
                             />
                             <span className="text-slate-400">必填</span>
                           </label>
+                          
+                          {/* 5. 刪除 */}
                           <button
                             onClick={() => removeField(index)}
                             className="p-1 text-red-400 hover:text-red-300"

@@ -2726,3 +2726,118 @@ export const reviewTemplateSuggestion = functions
       }
     })
   })
+
+// ============================================
+// 🦄 UNICORN: Seed Module and Action OptionSets
+// ============================================
+
+/**
+ * Seed module and action OptionSets
+ * This function creates the standard module and action OptionSets if they don't exist
+ * Call this once to initialize the system
+ */
+export const seedModuleActionOptionSets = functions
+  .region('asia-east1')
+  .https.onRequest((req, res) => {
+    corsHandler(req, res, async () => {
+      // Only allow POST
+      if (req.method !== 'POST') {
+        res.status(405).json({ error: 'Method not allowed' })
+        return
+      }
+      
+      // Verify user is superuser
+      const user = await verifyIdToken(req)
+      if (!user || !isSuperuserEmail(user.email)) {
+        res.status(403).json({ error: 'Only superusers can seed OptionSets' })
+        return
+      }
+      
+      try {
+        const db = admin.firestore()
+        const now = admin.firestore.FieldValue.serverTimestamp()
+        const results: any = { module: null, action: null }
+        
+        // Check if module OptionSet exists
+        const moduleQuery = await db.collection('optionSets')
+          .where('code', '==', 'module')
+          .where('isMaster', '==', true)
+          .limit(1)
+          .get()
+        
+        if (moduleQuery.empty) {
+          // Create module OptionSet
+          const moduleRef = await db.collection('optionSets').add({
+            code: 'module',
+            name: '模組分類',
+            description: '表格的模組分類',
+            isMaster: true,
+            createdBy: user.email,
+            createdAt: now,
+            updatedAt: now,
+            items: [
+              { value: 'ADMIN', label: '行政', status: 'active', sort: 1 },
+              { value: 'HR', label: '人事', status: 'active', sort: 2 },
+              { value: 'FINANCE', label: '財務', status: 'active', sort: 3 },
+              { value: 'TEACHING', label: '教學', status: 'active', sort: 4 },
+              { value: 'CAMP', label: '營會', status: 'active', sort: 5 },
+              { value: 'SERVICE', label: '服務', status: 'active', sort: 6 },
+              { value: 'EVENT', label: '活動', status: 'active', sort: 7 },
+              { value: 'OTHER', label: '其他', status: 'active', sort: 99 }
+            ]
+          })
+          results.module = { created: true, id: moduleRef.id }
+          console.log('Module OptionSet created:', moduleRef.id)
+        } else {
+          results.module = { created: false, id: moduleQuery.docs[0].id, message: 'Already exists' }
+        }
+        
+        // Check if action OptionSet exists
+        const actionQuery = await db.collection('optionSets')
+          .where('code', '==', 'action')
+          .where('isMaster', '==', true)
+          .limit(1)
+          .get()
+        
+        if (actionQuery.empty) {
+          // Create action OptionSet
+          const actionRef = await db.collection('optionSets').add({
+            code: 'action',
+            name: '動作類型',
+            description: '表格的動作類型',
+            isMaster: true,
+            createdBy: user.email,
+            createdAt: now,
+            updatedAt: now,
+            items: [
+              { value: 'REGISTER', label: '登記', status: 'active', sort: 1 },
+              { value: 'REPORT', label: '報告', status: 'active', sort: 2 },
+              { value: 'REQUEST', label: '申請', status: 'active', sort: 3 },
+              { value: 'RECORD', label: '記錄', status: 'active', sort: 4 },
+              { value: 'REVIEW', label: '審核', status: 'active', sort: 5 },
+              { value: 'SUBMIT', label: '提交', status: 'active', sort: 6 },
+              { value: 'COLLECTION', label: '收集', status: 'active', sort: 7 },
+              { value: 'OTHER', label: '其他', status: 'active', sort: 99 }
+            ]
+          })
+          results.action = { created: true, id: actionRef.id }
+          console.log('Action OptionSet created:', actionRef.id)
+        } else {
+          results.action = { created: false, id: actionQuery.docs[0].id, message: 'Already exists' }
+        }
+        
+        res.status(200).json({
+          success: true,
+          message: 'Seed completed',
+          results
+        })
+        
+      } catch (error: any) {
+        console.error('Seed failed:', error)
+        res.status(500).json({ 
+          error: 'Seed failed', 
+          message: error.message 
+        })
+      }
+    })
+  })
