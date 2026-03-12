@@ -66,19 +66,28 @@ export function getCurrentUser(): User | null {
 }
 
 /**
- * 檢查是否為 Leader（暫時用 email 白名單，之後改用 custom claims）
+ * Developer 白名單（建表權限）
+ * 只有此名單內的帳號可以看到與進入 Developer View
+ */
+const developerEmails = [
+  'joeshi@dbyv.org',
+]
+
+/**
+ * 檢查是否為 Developer（白名單機制）
+ * Developer 可以建立與管理表格、選項池
+ * 一般使用者完全看不到 Developer 入口
+ */
+export function isDeveloper(user: User | null): boolean {
+  if (!user?.email) return false
+  return developerEmails.includes(user.email)
+}
+
+/**
+ * 檢查是否為 Leader（沿用既有判斷，內部映射到 developer 白名單）
  */
 export function isLeader(user: User | null): boolean {
-  if (!user?.email) return false
-  
-  // TODO: 之後改用 Firebase custom claims
-  // 暫時用 email 白名單
-  const leaderEmails = [
-    'joeshi@dbyv.org',
-    // 在這裡加入其他 leader 的 email
-  ]
-  
-  return leaderEmails.includes(user.email)
+  return isDeveloper(user)
 }
 
 /**

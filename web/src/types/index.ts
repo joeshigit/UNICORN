@@ -107,6 +107,16 @@ export interface FieldDefinition {
   computeConfig?: ComputeConfig
 }
 
+// ---------- Template DevMeta（Developer 備忘）----------
+export interface DevMeta {
+  purpose: string
+  intendedUsers: string
+  outputAction: string
+  connectedSource: string
+  retrievalHint: string
+  precautions: string
+}
+
 // ---------- Template（表格定義）----------
 export interface Template {
   id?: string
@@ -122,7 +132,9 @@ export interface Template {
   defaults?: Record<UniversalKey, unknown>
   
   // 🦄 UNICORN: Phase 1 - Form Management
-  description?: string           // Form description
+  _isDraft?: boolean             // true = draft (not published), false/undefined = published
+  description?: string           // Form description (shown to staff)
+  devMeta?: DevMeta              // Developer notes (shown in Developer Console)
   accessType?: 'all' | 'whitelist'  // Who can fill this form
   accessWhitelist?: string[]     // Allowed emails (if accessType is whitelist)
   managerEmails?: string[]       // Up to 5 managers who can edit this form

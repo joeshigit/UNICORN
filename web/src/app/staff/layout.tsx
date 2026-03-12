@@ -5,7 +5,6 @@ import { ProtectedRoute } from '@/components/auth'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-// Phase 3.3: Add Suggestions to navigation
 const navItems = [
   { 
     href: '/staff', 
@@ -25,15 +24,6 @@ const navItems = [
       </svg>
     )
   },
-  { 
-    href: '/staff/suggestions', 
-    label: '表格建議',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-      </svg>
-    )
-  },
 ]
 
 export default function StaffLayout({
@@ -41,12 +31,12 @@ export default function StaffLayout({
 }: {
   children: React.ReactNode
 }) {
-  const { user, signOut, isLeader } = useAuth()
+  const { user, signOut, isDeveloper } = useAuth()
   const pathname = usePathname()
 
   return (
     <ProtectedRoute>
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-slate-200">
         {/* Header */}
         <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
           <div className="max-w-5xl mx-auto px-4 sm:px-6">
@@ -83,25 +73,23 @@ export default function StaffLayout({
                 })}
               </nav>
 
-              {/* User */}
               <div className="flex items-center gap-3">
-                {isLeader && (
+                {isDeveloper && (
                   <Link
                     href="/leader"
                     className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200 transition-colors"
+                    title="Developer Console"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
                     </svg>
-                    Leader 平台
+                    Dev
                   </Link>
                 )}
                 <div className="text-right hidden sm:block">
                   <p className="text-sm font-medium text-gray-900">
                     {user?.displayName || user?.email?.split('@')[0]}
                   </p>
-                  <p className="text-xs text-blue-600">Staff</p>
                 </div>
                 {user?.photoURL && (
                   <img
@@ -142,16 +130,15 @@ export default function StaffLayout({
                 </Link>
               )
             })}
-            {isLeader && (
+            {isDeveloper && (
               <Link
                 href="/leader"
                 className="px-3 py-2 bg-purple-100 text-purple-700 rounded-lg flex items-center justify-center gap-1.5 text-sm"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
                 </svg>
-                Leader
+                Dev
               </Link>
             )}
           </div>

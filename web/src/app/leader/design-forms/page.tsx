@@ -7,14 +7,11 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@/components/auth/AuthProvider'
 import { 
   getOptionSets,
-  getMasterOptionSets,
   getSubsetsForMaster,
   createSubsetFromMaster,
   getTemplates,
-  getMyTemplateDrafts
 } from '@/lib/firestore'
-import type { OptionSet, Template, TemplateDraft } from '@/types'
-import Link from 'next/link'
+import type { OptionSet, Template } from '@/types'
 
 type TabType = 'options' | 'templates'
 
@@ -33,7 +30,6 @@ export default function DesignFormsPage() {
   
   // Templates tab state
   const [templates, setTemplates] = useState<Template[]>([])
-  const [myDrafts, setMyDrafts] = useState<TemplateDraft[]>([])
   
   const [loading, setLoading] = useState(true)
 
@@ -52,12 +48,8 @@ export default function DesignFormsPage() {
         const sets = await getOptionSets()
         setOptionSets(sets)
       } else {
-        const [templatesData, draftsData] = await Promise.all([
-          getTemplates(),
-          getMyTemplateDrafts(user.email)
-        ])
+        const templatesData = await getTemplates()
         setTemplates(templatesData)
-        setMyDrafts(draftsData)
       }
     } catch (error) {
       console.error('載入資料失敗:', error)
@@ -154,9 +146,9 @@ export default function DesignFormsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">設計表格</h1>
+        <h1 className="text-2xl font-bold text-gray-900">選項池與建表</h1>
         <p className="text-gray-500 mt-1">
-          探索選項池、建立子集、設計表格
+          檢視 Master OptionSet、建立子集、建立與管理表格草稿
         </p>
       </div>
 
@@ -407,59 +399,6 @@ export default function DesignFormsPage() {
       {/* Part B: Create Templates */}
       {activeTab === 'templates' && (
         <div className="space-y-6">
-          {/* My Drafts */}
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">我的草稿</h2>
-              <Link
-                href="/leader/draft-templates"
-                className="px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition-colors"
-              >
-                建立新草稿
-              </Link>
-            </div>
-            
-            {loading ? (
-              <div className="space-y-3">
-                {[1, 2].map(i => (
-                  <div key={i} className="h-24 bg-gray-100 rounded-xl animate-pulse" />
-                ))}
-              </div>
-            ) : myDrafts.length === 0 ? (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 text-center">
-                <p className="text-amber-800 text-sm">
-                  尚無草稿表格
-                </p>
-              </div>
-            ) : (
-              <div className="grid gap-4">
-                {myDrafts.map(draft => (
-                  <div key={draft.id} className="bg-white rounded-xl border border-amber-200 p-6">
-                    <div className="flex items-start justify-between mb-3">
-                      <div>
-                        <h3 className="font-semibold text-gray-900">{draft.name}</h3>
-                        <p className="text-sm text-gray-500 mt-1">
-                          {draft.moduleId} · {draft.actionId} · {draft.fields.length} 個欄位
-                        </p>
-                      </div>
-                      <span className="px-2 py-1 bg-amber-100 text-amber-700 text-xs rounded">
-                        {draft.status === 'draft' ? '草稿' : 
-                         draft.status === 'pending_review' ? '待審核' : 
-                         draft.status}
-                      </span>
-                    </div>
-                    <Link
-                      href="/leader/draft-templates"
-                      className="inline-block px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition-colors"
-                    >
-                      編輯草稿
-                    </Link>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
           {/* Browse Existing Templates */}
           <div>
             <h2 className="text-lg font-semibold text-gray-900 mb-4">瀏覽現有表格</h2>

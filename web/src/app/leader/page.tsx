@@ -1,385 +1,179 @@
 'use client'
 
-// Phase 2.2: Dashboard Upgrade with usage stats and recent forms
-
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useAuth } from '@/components/auth/AuthProvider'
-import { 
-  getTemplates, 
-  getOptionSets, 
-  getAllSubmissions,
-  getUserFormStats,
-  getTemplatesCreatedThisMonth,
-  getMyManagedTemplates,
-  getRecentSubmissionsForMyTemplates
-} from '@/lib/firestore'
-import Link from 'next/link'
-import type { Template, UserFormStats, Submission } from '@/types'
+import { getTemplates, toggleTemplateEnabled, updateTemplate, deleteTemplate } from '@/lib/firestore'
+import type { Template } from '@/types'
+import { useRouter } from 'next/navigation'
 
-export default function LeaderDashboard() {
+function truncate(str: string, len: number) {
+  if (!str) return ''
+  return str.length > len ? str.slice(0, len) + '…' : str
+}
+
+export default function LeaderAllFormsPage() {
   const { user } = useAuth()
-  const [stats, setStats] = useState({
-    templates: 0,
-    enabledTemplates: 0,
-    optionSets: 0,
-    submissions: 0,
-    todaySubmissions: 0
-  })
-  const [myFormStats, setMyFormStats] = useState<UserFormStats[]>([])
-  const [thisMonthTemplates, setThisMonthTemplates] = useState<Template[]>([])
-  const [recentSubmissions, setRecentSubmissions] = useState<Submission[]>([])
+  const router = useRouter()
+  const [templates, setTemplates] = useState<Template[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    if (user?.email) {
-      loadDashboardData()
-    }
-  }, [user])
-
-  const loadDashboardData = async () => {
-    if (!user?.email) return
-    
+  const loadTemplates = async () => {
     try {
       setLoading(true)
-      
-      // Load basic stats
-      const [templates, optionSets, submissions, userStats] = await Promise.all([
-        getTemplates(),
-        getOptionSets(),
-        getAllSubmissions(),
-        getUserFormStats(user.email)
-      ])
-      
-      // Calculate today submissions
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      const todaySubmissions = submissions.filter(s => {
-        const submittedAt = s._submittedAt instanceof Date 
-          ? s._submittedAt 
-          : new Date(s._submittedAt as string)
-        return submittedAt >= today
-      })
-
-      setStats({
-        templates: templates.length,
-        enabledTemplates: templates.filter(t => t.enabled).length,
-        optionSets: optionSets.length,
-        submissions: submissions.length,
-        todaySubmissions: todaySubmissions.length
-      })
-      
-      // Phase 2.2: Load user-specific data
-      setMyFormStats(userStats)
-      
-      // Load templates created this month (UNICORN: using _createdMonth)
-      const monthTemplates = await getTemplatesCreatedThisMonth()
-      setThisMonthTemplates(monthTemplates)
-      
-      // Load recent submissions for my managed templates
-      const managedTemplates = await getMyManagedTemplates(user.email)
-      const templateIds = managedTemplates.map(t => t.id!).filter(Boolean)
-      if (templateIds.length > 0) {
-        const recent = await getRecentSubmissionsForMyTemplates(templateIds, 5)
-        setRecentSubmissions(recent)
-      }
-      
+      const data = await getTemplates()
+      setTemplates(data)
     } catch (error) {
-      console.error('載入總覽資料失敗:', error)
+      console.error('載入表格失敗:', error)
     } finally {
       setLoading(false)
     }
   }
 
-  const statCards = [
-    {
-      title: '表格總數',
-      value: stats.templates,
-      subValue: `${stats.enabledTemplates} 個啟用中`,
-      icon: (
-        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-      ),
-      color: 'purple',
-      href: '/leader/my-templates'
-    },
-    {
-      title: '選項池',
-      value: stats.optionSets,
-      subValue: '下拉選單選項',
-      icon: (
-        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-        </svg>
-      ),
-      color: 'blue',
-      href: '/leader/design-forms'
-    },
-    {
-      title: '總提交數',
-      value: stats.submissions,
-      subValue: `今日 ${stats.todaySubmissions} 筆`,
-      icon: (
-        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-        </svg>
-      ),
-      color: 'green',
-      href: '/leader/exports'
-    }
-  ]
+  useEffect(() => {
+    if (user?.email) loadTemplates()
+  }, [user])
 
-  const colorClasses: Record<string, { bg: string; text: string; icon: string }> = {
-    purple: { bg: 'bg-purple-50', text: 'text-purple-700', icon: 'text-purple-500' },
-    blue: { bg: 'bg-blue-50', text: 'text-blue-700', icon: 'text-blue-500' },
-    green: { bg: 'bg-green-50', text: 'text-green-700', icon: 'text-green-500' },
-    amber: { bg: 'bg-amber-50', text: 'text-amber-700', icon: 'text-amber-500' }
+  const published = useMemo(() => {
+    const list = templates.filter(t => t._isDraft !== true)
+    return list.sort((a, b) => (a.enabled === b.enabled ? 0 : a.enabled ? -1 : 1))
+  }, [templates])
+
+  const drafts = useMemo(() => templates.filter(t => t._isDraft === true), [templates])
+
+  const handleToggle = async (t: Template) => {
+    if (!t.id) return
+    try {
+      await toggleTemplateEnabled(t.id, !t.enabled)
+      await loadTemplates()
+    } catch (e) {
+      console.error('切換失敗:', e)
+    }
   }
 
-  // Format relative time
-  const formatRelativeTime = (date: Date | string) => {
-    const d = date instanceof Date ? date : new Date(date as string)
-    const now = new Date()
-    const diffMs = now.getTime() - d.getTime()
-    const diffMins = Math.floor(diffMs / 60000)
-    const diffHours = Math.floor(diffMs / 3600000)
-    const diffDays = Math.floor(diffMs / 86400000)
-    
-    if (diffMins < 1) return '剛剛'
-    if (diffMins < 60) return `${diffMins} 分鐘前`
-    if (diffHours < 24) return `${diffHours} 小時前`
-    if (diffDays < 7) return `${diffDays} 天前`
-    return d.toLocaleDateString('zh-TW')
+  const handlePublishDraft = async (t: Template) => {
+    if (!t.id || !confirm(`確定要發佈「${t.name}」？發佈後使用者即可在填報中心看到。`)) return
+    try {
+      await updateTemplate(t.id, { enabled: true, _isDraft: false } as any)
+      await loadTemplates()
+    } catch (e) {
+      console.error('發佈失敗:', e)
+      alert('發佈失敗：' + (e instanceof Error ? e.message : '未知錯誤'))
+    }
+  }
+
+  const handleDeleteDraft = async (t: Template) => {
+    if (!t.id || !confirm(`確定要刪除草稿「${t.name}」？此操作不可復原。`)) return
+    try {
+      await deleteTemplate(t.id)
+      await loadTemplates()
+    } catch (e) {
+      console.error('刪除失敗:', e)
+      alert('刪除失敗：' + (e instanceof Error ? e.message : '未知錯誤'))
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">所有表格</h1>
+          <p className="text-gray-500 mt-1">管理所有已建立的資料收集表格</p>
+        </div>
+        <div className="grid gap-4">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="bg-white rounded-xl border border-gray-200 p-6 h-40 animate-pulse" />
+          ))}
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="space-y-8">
-      {/* 歡迎區 */}
-      <div className="bg-gradient-to-r from-purple-600 to-purple-800 rounded-2xl p-6 text-white">
-        <h1 className="text-2xl font-bold">
-          歡迎回來，{user?.displayName || user?.email?.split('@')[0]}！
-        </h1>
-        <p className="text-purple-200 mt-1">
-          這是表格設定平台的總覽頁面
-        </p>
+    <div className="space-y-8 min-h-screen bg-purple-50/50 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-2 rounded-xl">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">所有表格</h1>
+        <p className="text-gray-500 mt-1">管理所有已建立的資料收集表格</p>
       </div>
 
-      {/* 統計卡片 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {statCards.map((card, index) => {
-          const colors = colorClasses[card.color]
-          return (
-            <Link
-              key={index}
-              href={card.href}
-              className="bg-white rounded-xl border border-gray-200 p-6 hover:shadow-lg hover:border-purple-200 transition-all group"
-            >
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-gray-500">{card.title}</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-1">
-                    {loading ? (
-                      <span className="inline-block w-12 h-8 bg-gray-200 rounded animate-pulse"></span>
-                    ) : (
-                      card.value
-                    )}
-                  </p>
-                  <p className="text-sm text-gray-400 mt-1">{card.subValue}</p>
-                </div>
-                <div className={`${colors.bg} p-3 rounded-xl ${colors.icon} group-hover:scale-110 transition-transform`}>
-                  {card.icon}
-                </div>
-              </div>
-            </Link>
-          )
-        })}
-      </div>
-
-      {/* Phase 2.2: New Sections */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Most Used Forms */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <span>📊</span>
-            <span>常用表格</span>
-          </h2>
-          {loading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map(i => (
-                <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
-              ))}
-            </div>
-          ) : myFormStats.length === 0 ? (
-            <p className="text-gray-400 text-sm">尚無使用記錄</p>
-          ) : (
-            <div className="space-y-2">
-              {myFormStats.slice(0, 5).map(stat => (
-                <Link
-                  key={stat.id}
-                  href={`/staff/submit/${stat.templateId}`}
-                  className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors border border-transparent hover:border-purple-200"
-                >
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-900">{stat.templateName}</p>
-                    <p className="text-xs text-gray-500">
-                      使用 {stat.useCount} 次 · {formatRelativeTime(stat.lastUsedAt)}
-                    </p>
-                  </div>
-                  {stat.isFavorite && (
-                    <span className="text-amber-500">⭐</span>
-                  )}
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Forms Created This Month */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <span>🆕</span>
-            <span>本月新表格</span>
-          </h2>
-          {loading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map(i => (
-                <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
-              ))}
-            </div>
-          ) : thisMonthTemplates.length === 0 ? (
-            <p className="text-gray-400 text-sm">本月尚未建立新表格</p>
-          ) : (
-            <div className="space-y-2">
-              {thisMonthTemplates.slice(0, 5).map(template => (
-                <Link
-                  key={template.id}
-                  href={template.createdBy === user?.email 
-                    ? `/leader/my-templates` 
-                    : `/staff/submit/${template.id}`}
-                  className="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors border border-transparent hover:border-purple-200"
-                >
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-900">{template.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {template.moduleId} · {template.actionId}
-                    </p>
-                  </div>
-                  {template.createdBy === user?.email && (
-                    <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
-                      我建立的
+      {/* Published templates */}
+      {published.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-medium text-gray-700">正式表格 ({published.length})</h2>
+          {published.map(t => (
+            <div key={t.id} className="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-semibold text-gray-900">{t.name}</h3>
+                    <span className={`text-xs px-2 py-0.5 rounded ${t.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {t.enabled ? '啟用中' : '已停用'}
                     </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="bg-purple-100 text-purple-700 font-mono text-xs px-2 py-0.5 rounded">{t.moduleId}_{t.actionId}</span>
+                    <span className="text-xs text-gray-400">{t.fields?.length ?? 0} 欄位 · v{t.version ?? 1}</span>
+                  </div>
+                  {t.devMeta && Object.values(t.devMeta).some(v => v?.trim()) && (
+                    <div className="mt-2 text-xs text-gray-500 space-y-0.5">
+                      {t.devMeta.purpose && <p><span className="text-gray-400">用途：</span>{truncate(t.devMeta.purpose, 80)}</p>}
+                      {t.devMeta.intendedUsers && <p><span className="text-gray-400">對象：</span>{truncate(t.devMeta.intendedUsers, 60)}</p>}
+                      {t.devMeta.outputAction && <p><span className="text-gray-400">後續：</span>{truncate(t.devMeta.outputAction, 60)}</p>}
+                    </div>
                   )}
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Recently Submitted (My Forms) */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-          <span>📝</span>
-          <span>最近提交（我的表格）</span>
-        </h2>
-        {loading ? (
-          <div className="space-y-2">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
-            ))}
-          </div>
-        ) : recentSubmissions.length === 0 ? (
-          <p className="text-gray-400 text-sm">尚無提交記錄</p>
-        ) : (
-          <div className="space-y-2">
-            {recentSubmissions.map(submission => (
-              <div
-                key={submission.id}
-                className="flex items-center justify-between p-3 rounded-lg border border-gray-100"
-              >
-                <div className="flex-1">
-                  <p className="font-medium text-gray-900">
-                    {submission._templateModule} · {submission._templateAction}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {submission._submitterEmail} · {formatRelativeTime(submission._submittedAt)}
-                  </p>
+                  {t.description && <p className="mt-1 text-xs text-gray-400">{truncate(t.description, 100)}</p>}
                 </div>
-                <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                  {submission._status}
-                </span>
+                <div className="flex flex-wrap gap-1.5 shrink-0">
+                  <button onClick={() => router.push(`/leader/create?edit=${t.id}`)} className="px-3 py-1.5 text-xs font-medium text-purple-700 bg-purple-100 hover:bg-purple-200 rounded-lg transition-colors">編輯</button>
+                  <button onClick={() => router.push(`/leader/create?from=${t.id}`)} className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">複製</button>
+                  <button onClick={() => handleToggle(t)} className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${t.enabled ? 'text-amber-700 bg-amber-100 hover:bg-amber-200' : 'text-green-700 bg-green-100 hover:bg-green-200'}`}>
+                    {t.enabled ? '停用' : '啟用'}
+                  </button>
+                  <button onClick={() => alert('匯出新資料功能開發中 — 將匯出未鎖定的 ACTIVE submissions 並自動鎖定')} className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-lg transition-colors">匯出新</button>
+                  <button onClick={() => alert('匯出全部功能開發中 — 將匯出所有 ACTIVE + LOCKED submissions')} className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors">匯出全部</button>
+                </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* 快速操作 - Phase 2.2: Updated */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">快速操作</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Link
-            href="/leader/my-templates"
-            className="flex items-center gap-3 p-4 bg-purple-50 rounded-xl hover:bg-purple-100 transition-colors"
-          >
-            <div className="w-10 h-10 bg-purple-500 rounded-lg flex items-center justify-center text-white">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
             </div>
-            <div>
-              <p className="font-medium text-gray-900">管理表格</p>
-              <p className="text-xs text-gray-500">管理我的表格</p>
-            </div>
-          </Link>
-          
-          <Link
-            href="/leader/exports"
-            className="flex items-center gap-3 p-4 bg-green-50 rounded-xl hover:bg-green-100 transition-colors"
-          >
-            <div className="w-10 h-10 bg-green-500 rounded-lg flex items-center justify-center text-white">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-medium text-gray-900">查看資料</p>
-              <p className="text-xs text-gray-500">查看表格數據</p>
-            </div>
-          </Link>
-          
-          <Link
-            href="/leader/exports"
-            className="flex items-center gap-3 p-4 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors"
-          >
-            <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center text-white">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-medium text-gray-900">匯出資料</p>
-              <p className="text-xs text-gray-500">匯出到 Google Sheet</p>
-            </div>
-          </Link>
-          
-          <Link
-            href="/leader/design-forms"
-            className="flex items-center gap-3 p-4 bg-amber-50 rounded-xl hover:bg-amber-100 transition-colors"
-          >
-            <div className="w-10 h-10 bg-amber-500 rounded-lg flex items-center justify-center text-white">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-            </div>
-            <div>
-              <p className="font-medium text-gray-900">建立新表格</p>
-              <p className="text-xs text-gray-500">設計新的資料收集表格</p>
-            </div>
-          </Link>
+          ))}
         </div>
-      </div>
+      )}
+
+      {/* Drafts */}
+      {drafts.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-medium text-gray-400">草稿 ({drafts.length})</h2>
+          {drafts.map(t => (
+            <div key={t.id} className="bg-gray-50 rounded-xl border border-gray-200 p-5 opacity-75 hover:opacity-100 transition-opacity">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-medium text-gray-700">{t.name || '未命名草稿'}</h3>
+                    <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700">草稿</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    {t.moduleId && t.actionId && (
+                      <span className="bg-gray-200 text-gray-600 font-mono text-xs px-2 py-0.5 rounded">{t.moduleId}_{t.actionId}</span>
+                    )}
+                    <span className="text-xs text-gray-400">{t.fields?.length ?? 0} 欄位</span>
+                  </div>
+                  {t.description && <p className="mt-1 text-xs text-gray-400">{truncate(t.description, 80)}</p>}
+                </div>
+                <div className="flex gap-1.5 shrink-0">
+                  <button onClick={() => router.push(`/leader/create?edit=${t.id}`)} className="px-3 py-1.5 text-xs font-medium text-purple-700 bg-purple-100 hover:bg-purple-200 rounded-lg transition-colors">編輯</button>
+                  <button onClick={() => handlePublishDraft(t)} className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-100 hover:bg-green-200 rounded-lg transition-colors">發佈</button>
+                  <button onClick={() => handleDeleteDraft(t)} className="px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors">刪除</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {published.length === 0 && drafts.length === 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+          <p className="text-gray-500 mb-4">尚無表格</p>
+          <button onClick={() => router.push('/leader/create')} className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors">建立第一個表格</button>
+        </div>
+      )}
     </div>
   )
 }

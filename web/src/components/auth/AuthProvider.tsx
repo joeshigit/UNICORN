@@ -2,22 +2,22 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { User } from 'firebase/auth'
-import { onAuthChange, isLeader, signOut as authSignOut } from '@/lib/auth'
+import { onAuthChange, isLeader, isDeveloper, signOut as authSignOut } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
 
-// Auth Context 型別
 interface AuthContextType {
   user: User | null
   loading: boolean
   isLeader: boolean
+  isDeveloper: boolean
   signOut: () => Promise<void>
 }
 
-// 建立 Context
 const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
   isLeader: false,
+  isDeveloper: false,
   signOut: async () => {},
 })
 
@@ -51,6 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     loading,
     isLeader: isLeader(user),
+    isDeveloper: isDeveloper(user),
     signOut: handleSignOut,
   }
 

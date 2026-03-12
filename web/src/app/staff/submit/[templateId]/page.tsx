@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/components/auth/AuthProvider'
-import { getTemplate, getOptionSet, createSubmissionWithId, generateSubmissionId } from '@/lib/firestore'
+import { getTemplate, getOptionSet, getSubmission, createSubmissionWithId, generateSubmissionId, cancelSubmission } from '@/lib/firestore'
 import { DateTimePicker } from '@/components/form/DateTimePicker'
 import { FileUploader } from '@/components/form/FileUploader'
 import type { Template, FieldDefinition, OptionItem } from '@/types'
@@ -12,8 +12,14 @@ import Link from 'next/link'
 export default function SubmitPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { user } = useAuth()
   const templateId = params.templateId as string
+  const editSubmissionId = searchParams.get('edit')
+  const correctForId = searchParams.get('correctFor')
+  const isEditMode = !!editSubmissionId
+  const isCorrectMode = !!correctForId
+  const sourceSubmissionId = editSubmissionId || correctForId
 
   const [template, setTemplate] = useState<Template | null>(null)
   const [loading, setLoading] = useState(true)
@@ -22,8 +28,7 @@ export default function SubmitPage() {
   const [optionSets, setOptionSets] = useState<Record<string, OptionItem[]>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   
-  // 🦄 UNICORN: 預先產生 submissionId，避免檔案上傳產生 orphan files
-  const [submissionId] = useState(() => generateSubmissionId())
+  const [submissionId] = useState(() => editSubmissionId || generateSubmissionId())
 
   useEffect(() => {
     loadTemplate()
@@ -58,6 +63,32 @@ export default function SubmitPage() {
           initialValues[field.key] = ''
         }
       }
+      // Load existing submission for edit/correct mode
+      if (sourceSubmissionId) {
+        try {
+          const sub = await getSubmission(sourceSubmissionId)
+          if (sub) {
+            const subValues = (sub as any).values || {}
+            const subFiles = (sub as any).files || []
+            for (const field of data.fields || []) {
+              if (field.type === 'file') {
+                const fieldFiles = subFiles.filter((f: any) => f.fieldKey === field.key)
+                if (fieldFiles.length > 0) {
+                  initialValues[field.key] = fieldFiles
+                }
+              } else {
+                const val = (sub as any)[field.key] !== undefined ? (sub as any)[field.key] : subValues[field.key]
+                if (val !== undefined && val !== null) {
+                  initialValues[field.key] = val
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('載入提交資料失敗:', e)
+        }
+      }
+
       setValues(initialValues)
       
       // 載入下拉選項
@@ -68,7 +99,7 @@ export default function SubmitPage() {
         try {
           const optionSet = await getOptionSet(field.optionSetId!)
           if (optionSet) {
-            optionSetData[field.optionSetId!] = optionSet.items.filter(i => i.enabled)
+            optionSetData[field.optionSetId!] = optionSet.items.filter(i => i.status !== 'deprecated' && (i as any).enabled !== false)
           }
         } catch (e) {
           console.error('載入選項池失敗:', field.optionSetId)
@@ -144,14 +175,15 @@ export default function SubmitPage() {
         if (isFileField && Array.isArray(value)) {
           // 🦄 UNICORN: 收集檔案並關聯到欄位 key
           for (const file of value as any[]) {
-            allFiles.push({
-              fieldKey: key,    // 🦄 UNICORN: Which field this file belongs to
+            const fileEntry: Record<string, any> = {
+              fieldKey: key,
               driveFileId: file.driveFileId,
               name: file.name,
               mimeType: file.mimeType,
               size: file.size,
-              webViewLink: file.webViewLink
-            })
+            }
+            if (file.webViewLink) fileEntry.webViewLink = file.webViewLink
+            allFiles.push(fileEntry as any)
           }
           // 在 values 中只存檔案數量或簡單參考
           cleanValues[key] = (value as any[]).length > 0 
@@ -162,18 +194,23 @@ export default function SubmitPage() {
         }
       }
       
-      // 🦄 UNICORN: 使用預先產生的 submissionId 建立 submission
-      await createSubmissionWithId(submissionId, {
+      const newId = (isEditMode || isCorrectMode) ? generateSubmissionId() : submissionId
+      await createSubmissionWithId(newId, {
         templateId: template!.id!,
-        templateVersion: template!.version || 1,  // 🦄 UNICORN: Freeze template version
+        templateVersion: template!.version || 1,
         moduleId: template!.moduleId,
         actionId: template!.actionId,
         values: cleanValues,
-        labelsSnapshot,                           // 🦄 UNICORN: Freeze labels for display
-        files: allFiles.length > 0 ? allFiles : undefined
+        labelsSnapshot,
+        files: allFiles.length > 0 ? allFiles : [],
+        ...(isCorrectMode && correctForId ? { supersedesSubmissionId: correctForId } : {}),
+        ...(isEditMode && editSubmissionId ? { supersedesSubmissionId: editSubmissionId } : {})
       }, user!.email!)
+
+      if (isEditMode && editSubmissionId) {
+        try { await cancelSubmission(editSubmissionId) } catch {}
+      }
       
-      // 成功
       router.push('/staff/my-submissions?success=1')
     } catch (error) {
       console.error('提交失敗:', error)
@@ -334,14 +371,25 @@ export default function SubmitPage() {
     <div className="max-w-2xl mx-auto">
       {/* 返回按鈕 */}
       <Link
-        href="/staff"
+        href={isEditMode || isCorrectMode ? '/staff/my-submissions' : '/staff'}
         className="inline-flex items-center gap-2 text-gray-500 hover:text-gray-700 mb-6"
       >
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
         </svg>
-        返回
+        {isEditMode || isCorrectMode ? '返回我的提交' : '返回'}
       </Link>
+
+      {isEditMode && (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+          正在修改已提交的資料。儲存後將覆蓋原有提交。
+        </div>
+      )}
+      {isCorrectMode && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+          正在重新提交（更正）。將建立一筆新提交，標記為對原紀錄的更正。
+        </div>
+      )}
 
       {/* 表格資訊 */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">

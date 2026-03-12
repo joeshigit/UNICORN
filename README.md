@@ -4,10 +4,18 @@
 
 這是一個**公司內部（同一個 Google Workspace 網域）**可重複使用的「資料收集平台」。
 
-- **Leader（表格設計者）**：用「表格設定平台」快速建立資料收集表格
-- **Staff（資料填報者）**：選表格 → 填欄位 → 上傳檔案 → 送出
-
 所有提交進同一張 universal table（`submissions`），檔案上傳到 Shared Drive。
+
+### 雙視圖架構
+
+| 視圖 | 誰可見 | 功能 |
+|------|--------|------|
+| **User View**（填報中心） | 所有登入使用者 | 選表格 → 填欄位 → 上傳檔案 → 送出 → 查看自己的提交 |
+| **Developer Console** | 僅白名單帳號 | 建立表格、管理選項池、啟停表格、設定填寫權限 |
+
+- 一般使用者登入後只看到 User View，畫面上不顯示任何 Developer 入口
+- Developer 白名單帳號同時可見兩個視圖的切換入口
+- 白名單定義在 `web/src/lib/auth.ts` 的 `developerEmails`
 
 ---
 
@@ -23,16 +31,18 @@
 
 ## 核心功能（Stage 1）
 
-### Staff 功能
-- 選擇表格（Template）
+### User View 功能
+- 瀏覽所有可用表格
 - 動態表單填寫（text/number/date/dropdown/textarea/file/reference）
-- 多檔上傳
+- 多檔上傳至 Google Drive
 - 我的提交（檢視/編輯/取消）
 
-### Leader 功能
-- **表格管理**：新增/編輯/啟用/停用
-- **下拉選項池管理**：新增/編輯/排序/停用
-- **匯出**：匯出資料到 Google Sheet
+### Developer Console 功能
+- **選項池**：檢視 Master OptionSet、建立 Subset
+- **建表**：草稿建立、欄位定義、發佈
+- **表格管理**：啟用/停用、填寫權限、管理者設定
+
+> Developer 建表流程詳見 [Developer 建表手冊](docs/developer-form-manual.md)
 
 ---
 
@@ -74,6 +84,7 @@ unicorn-dcs/
 ## 相關文件
 
 - [架構與開發計畫](docs/architecture.md)
+- [Developer 建表手冊](docs/developer-form-manual.md)
 - [主題文件](../Universal-Data-Capture-Platform-Theme-Paper.md)
 
 ---

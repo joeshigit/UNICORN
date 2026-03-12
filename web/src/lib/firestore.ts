@@ -365,25 +365,58 @@ export async function createSubmissionWithId(
     }
   }
 
-  // 🦄 UNICORN: 使用指定的 ID 建立文件
-  await setDoc(doc(db, 'submissions', submissionId), {
+  const now = serverTimestamp()
+  const month = computeMonth()
+
+  // 🦄 UNICORN: Dual Write — 同時寫入舊欄位名（兼容）和 _ 前綴欄位名（UNICORN 標準）
+  const submissionData: Record<string, any> = {
+    // Legacy fields (for backward compatibility with old code + Firestore rules)
     templateId: data.templateId,
     templateVersion: data.templateVersion,
     moduleId: data.moduleId,
     actionId: data.actionId,
     createdBy: userEmail,
     status: 'ACTIVE',
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+    createdAt: now,
+    updatedAt: now,
     values: data.values,
     labelsSnapshot: data.labelsSnapshot,
+
+    // UNICORN _ prefixed metadata (standard going forward)
+    _templateId: data.templateId,
+    _templateModule: data.moduleId,
+    _templateAction: data.actionId,
+    _templateVersion: data.templateVersion,
+    _submitterId: userEmail,
+    _submitterEmail: userEmail,
+    _submittedAt: now,
+    _submittedMonth: month,
+    _status: 'ACTIVE',
+    _fieldLabels: data.labelsSnapshot,
+
+    // Shared fields
     files: data.files || [],
-    _dateStart,
-    _dateEnd,
-    _month: computeMonth(),
+    _month: month,
     _refIds: [],
-    ...(data.supersedesSubmissionId && { supersedesSubmissionId: data.supersedesSubmissionId })
-  })
+  }
+
+  // UNICORN: Flatten user values to top level (alongside nested `values` for compat)
+  if (data.values) {
+    for (const [key, val] of Object.entries(data.values)) {
+      if (!key.startsWith('_') && val !== undefined) {
+        submissionData[key] = val
+      }
+    }
+  }
+
+  if (_dateStart) submissionData._dateStart = _dateStart
+  if (_dateEnd) submissionData._dateEnd = _dateEnd
+  if (data.supersedesSubmissionId) {
+    submissionData.supersedesSubmissionId = data.supersedesSubmissionId
+    submissionData._correctFor = data.supersedesSubmissionId
+  }
+
+  await setDoc(doc(db, 'submissions', submissionId), submissionData)
 }
 
 // 🦄 UNICORN: 產生新的 submission ID（用於先上傳檔案）
@@ -565,10 +598,12 @@ const CREATE_OPTION_SET_URL = 'https://asia-east1-unicorn-dcs.cloudfunctions.net
 
 export async function createOptionSetViaFunction(
   data: {
-    code: string                                    // 🦄 UNICORN: Machine name (immutable)
+    code: string
     name: string
     description?: string
     items?: Array<{ value: string; label: string }>
+    isMaster?: boolean
+    masterSetId?: string
   }
 ): Promise<string> {
   // 取得 Firebase ID Token
@@ -667,6 +702,8 @@ export async function updateOptionSetViaFunction(
   data: {
     name?: string
     description?: string
+    isMaster?: boolean
+    masterSetId?: string | null
     items?: Array<{
       value: string
       label: string

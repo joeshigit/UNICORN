@@ -104,7 +104,10 @@ export const uploadFile = functions
         })
         
         busboy.on('file', (name: string, file: NodeJS.ReadableStream, info: { filename: string, mimeType: string }) => {
-          const { filename, mimeType } = info
+          let { filename, mimeType } = info
+          try {
+            filename = Buffer.from(filename, 'latin1').toString('utf8')
+          } catch {}
           
           // 收集檔案資料
           const chunks: Buffer[] = []
@@ -228,20 +231,20 @@ export const cancelSubmission = functions
           return
         }
         
-        // 🦄 UNICORN: 狀態檢查 - 只有 ACTIVE 可以變成 CANCELLED
-        if (submissionData._status !== 'ACTIVE') {
+        const currentStatus = submissionData._status || submissionData.status
+        if (currentStatus !== 'ACTIVE') {
           res.status(400).json({ 
             error: 'Invalid state transition',
-            message: `Cannot cancel a submission with status: ${submissionData._status}`
+            message: `Cannot cancel a submission with status: ${currentStatus}`
           })
           return
         }
         
-        // 🦄 UNICORN: 執行狀態轉換（使用 Admin SDK 繞過 Rules）
         const now = admin.firestore.FieldValue.serverTimestamp()
         
         await submissionRef.update({
           status: 'CANCELLED',
+          _status: 'CANCELLED',
           updatedAt: now,
           cancelledAt: now,
           cancelledBy: user.email
@@ -717,7 +720,7 @@ export const createOptionSet = functions
       }
       
       try {
-        const { code, name, description, items } = req.body
+        const { code, name, description, items, isMaster, masterSetId } = req.body
         
         // 🦄 UNICORN: 驗證 code（機器名稱）
         if (!code) {
@@ -757,9 +760,11 @@ export const createOptionSet = functions
         
         // 建立新的選項池
         const docRef = await db.collection('optionSets').add({
-          code,                        // 🦄 UNICORN: Machine name (can be shared)
+          code,
           name,
           description: description || null,
+          isMaster: isMaster !== undefined ? isMaster : true,
+          masterSetId: masterSetId || null,
           createdBy: user.email,
           createdAt: now,
           updatedAt: now,
@@ -1077,7 +1082,7 @@ export const updateOptionSet = functions
       }
       
       try {
-        const { optionSetId, name, description, items } = req.body
+        const { optionSetId, name, description, items, isMaster, masterSetId } = req.body
         
         if (!optionSetId) {
           res.status(400).json({ error: 'Missing optionSetId' })
@@ -1108,6 +1113,14 @@ export const updateOptionSet = functions
         
         if (description !== undefined) {
           updates.description = description || null
+        }
+        
+        if (isMaster !== undefined) {
+          updates.isMaster = isMaster
+        }
+        
+        if (masterSetId !== undefined) {
+          updates.masterSetId = masterSetId || null
         }
         
         if (items !== undefined) {

@@ -7,19 +7,14 @@ import { LoginButton } from '@/components/auth'
 import { Loader2, Sparkles } from 'lucide-react'
 
 export default function HomePage() {
-  const { user, loading, isLeader } = useAuth()
+  const { user, loading } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
-    // 已登入 → 自動跳轉到對應頁面
     if (!loading && user) {
-      if (isLeader) {
-        router.push('/leader')
-      } else {
-        router.push('/staff')
-      }
+      router.push('/staff')
     }
-  }, [user, loading, isLeader, router])
+  }, [user, loading, router])
 
   // 載入中
   if (loading) {

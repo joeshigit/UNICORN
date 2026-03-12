@@ -113,7 +113,7 @@ export default function MyTemplatesPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">我的表格</h1>
+          <h1 className="text-2xl font-bold text-gray-900">表格管理</h1>
           <p className="text-gray-500 mt-1">載入中...</p>
         </div>
         <div className="space-y-4">
@@ -129,9 +129,9 @@ export default function MyTemplatesPage() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">我的表格</h1>
+        <h1 className="text-2xl font-bold text-gray-900">表格管理</h1>
         <p className="text-gray-500 mt-1">
-          管理你建立或管理的表格（共 {templates.length} 個）
+          啟停、權限設定、管理已發佈的表格（共 {templates.length} 個）
         </p>
       </div>
 
