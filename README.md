@@ -127,6 +127,36 @@ firebase deploy --only hosting
 > ⚠️ 新的 rules 會把 `submissions` 的更新鎖死、把 `optionSets` 的直接寫入打開，
 > 跟舊版多角色系統的行為不同。正式環境有既有資料的話，建議先開一個 dev 專案驗證。
 
+### 3.5 從舊版（多角色）搬過來
+
+如果 Firestore 裡已經有舊系統寫進去的資料，**部署完要跑一次搬遷**，不然：
+
+- 舊 submission 沒有 `_isLatest`，新版資料池用它篩選鏈頭，所以舊資料整批看不到
+- 舊 optionSet 沒有 `isMaster`，新版建表頁不會把它當成可用的完整清單
+- 更舊的 submission 把值放在巢狀的 `values: {}`，跨表查詢吃不到
+
+搬遷要用 Admin SDK（新規則禁止客戶端改 submission），所以需要服務帳戶金鑰：
+
+Firebase Console → 專案設定 → 服務帳戶 → 產生新的私密金鑰，下載 JSON。
+
+```bash
+cd scripts && npm install
+
+# 先試跑，只印出會改什麼，不寫入
+node migrate-to-solo.mjs --key "C:\path\to\serviceAccountKey.json"
+
+# 確認沒問題再真的寫
+node migrate-to-solo.mjs --key "C:\path\to\serviceAccountKey.json" --apply
+```
+
+腳本會補上 `_isLatest`、`_templateName`、`_fieldKeys`、`_optionLabels`，把舊欄位名
+（`templateId`、`createdBy`…）對應到 `_` 前綴版本，把巢狀 `values` 攤平到頂層，
+`CANCELLED` 轉成 `VOID`，並幫 optionSet 補上 `isMaster` 與 items 的 `status` / `sort`。
+
+沒有 `code` 的 optionSet 沒辦法自動猜，腳本會列出來讓你去 Console 手動補。
+
+> 金鑰用完就到 Console 刪掉，少一把在外面流傳的鑰匙。
+
 ### 4. 第一次進系統
 
 1. 登入後打開**選項池**，`module`（表格分類）和 `action`（表格動作）會自動建好，先各加幾個值
