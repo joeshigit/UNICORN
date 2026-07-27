@@ -43,6 +43,7 @@ function DataPool() {
   const [status, setStatus] = useState<SubmissionStatus | 'ALL'>('ACTIVE')
   const [fieldKey, setFieldKey] = useState('')
   const [fieldValue, setFieldValue] = useState('')
+  const [includeSuperseded, setIncludeSuperseded] = useState(false)
 
   useEffect(() => {
     Promise.all([listTemplates(), listOptionSets()])
@@ -62,6 +63,7 @@ function DataPool() {
           templateId: templateId || undefined,
           month: month || undefined,
           status,
+          includeSuperseded,
           fieldKey: fieldKey || undefined,
           fieldValue: fieldKey && fieldValue ? fieldValue : undefined,
         })
@@ -71,7 +73,7 @@ function DataPool() {
     } finally {
       setLoading(false)
     }
-  }, [templateId, month, status, fieldKey, fieldValue])
+  }, [templateId, month, status, fieldKey, fieldValue, includeSuperseded])
 
   useEffect(() => {
     runQuery()
@@ -228,6 +230,16 @@ function DataPool() {
               ))}
             </select>
           </div>
+
+          <label className="flex cursor-pointer items-center gap-2 self-end pb-2.5 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              className="rounded text-unicorn-600 focus:ring-unicorn-500"
+              checked={includeSuperseded}
+              onChange={e => setIncludeSuperseded(e.target.checked)}
+            />
+            連被更正的舊版本一起看
+          </label>
         </div>
       </div>
 
@@ -277,8 +289,11 @@ function DataPool() {
                         {displayValue(row, column.key)}
                       </td>
                     ))}
-                    <td className="px-4 py-3">
+                    <td className="whitespace-nowrap px-4 py-3">
                       <StatusChip status={row._status} />
+                      {row._isLatest === false && (
+                        <span className="chip ml-1 bg-amber-50 text-amber-700">舊版</span>
+                      )}
                     </td>
                   </tr>
                 ))}
