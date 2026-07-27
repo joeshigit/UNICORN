@@ -11,13 +11,16 @@
 //   _fieldLabels / _optionLabels      顯示用文字快照
 //   _submittedMonth                   月份查詢鍵
 //   Universal KEY 平鋪在頂層          跨表查詢不需要 join
+//
+// 讀取一律用 *FromServer：離線時要明確報錯，不要拿本地快取
+// 回一份看起來「沒有資料」的空清單。
 // ============================================
 
 import {
   collection,
   doc,
-  getDoc,
-  getDocs,
+  getDocFromServer,
+  getDocsFromServer,
   setDoc,
   updateDoc,
   deleteDoc,
@@ -76,12 +79,12 @@ function newId(collectionName: string): string {
 // ============================================
 
 export async function listOptionSets(): Promise<OptionSet[]> {
-  const snap = await getDocs(query(collection(db, 'optionSets'), orderBy('code')))
+  const snap = await getDocsFromServer(query(collection(db, 'optionSets'), orderBy('code')))
   return snap.docs.map(d => ({ id: d.id, ...d.data() })) as OptionSet[]
 }
 
 export async function getOptionSet(id: string): Promise<OptionSet | null> {
-  const snap = await getDoc(doc(db, 'optionSets', id))
+  const snap = await getDocFromServer(doc(db, 'optionSets', id))
   return snap.exists() ? ({ id: snap.id, ...snap.data() } as OptionSet) : null
 }
 
@@ -201,12 +204,12 @@ export async function ensureCoreOptionSets(userEmail: string): Promise<void> {
 // ============================================
 
 export async function listTemplates(): Promise<Template[]> {
-  const snap = await getDocs(query(collection(db, 'templates'), orderBy('updatedAt', 'desc')))
+  const snap = await getDocsFromServer(query(collection(db, 'templates'), orderBy('updatedAt', 'desc')))
   return snap.docs.map(d => ({ id: d.id, ...d.data() })) as Template[]
 }
 
 export async function getTemplate(id: string): Promise<Template | null> {
-  const snap = await getDoc(doc(db, 'templates', id))
+  const snap = await getDocFromServer(doc(db, 'templates', id))
   return snap.exists() ? ({ id: snap.id, ...snap.data() } as Template) : null
 }
 
@@ -283,7 +286,7 @@ export async function deleteTemplate(id: string): Promise<void> {
 }
 
 export async function countSubmissionsForTemplate(templateId: string): Promise<number> {
-  const snap = await getDocs(
+  const snap = await getDocsFromServer(
     query(collection(db, 'submissions'), where('_templateId', '==', templateId), fsLimit(1000))
   )
   return snap.size
@@ -441,7 +444,7 @@ export async function querySubmissions(q: SubmissionQuery = {}): Promise<Submiss
 
   if (hasFieldFilter) {
     // 跨表查詢：只用單一欄位條件（自動索引），排序與其他條件在前端處理
-    const snap = await getDocs(
+    const snap = await getDocsFromServer(
       query(collection(db, 'submissions'), where(q.fieldKey!, '==', q.fieldValue!), fsLimit(max))
     )
     rows = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Submission[]
@@ -451,7 +454,7 @@ export async function querySubmissions(q: SubmissionQuery = {}): Promise<Submiss
     if (q.templateId) constraints.push(where('_templateId', '==', q.templateId))
     if (q.month) constraints.push(where('_submittedMonth', '==', q.month))
     constraints.push(orderBy('_submittedAt', 'desc'), fsLimit(max))
-    const snap = await getDocs(query(collection(db, 'submissions'), ...constraints))
+    const snap = await getDocsFromServer(query(collection(db, 'submissions'), ...constraints))
     rows = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Submission[]
   }
 
@@ -471,7 +474,7 @@ export async function querySubmissions(q: SubmissionQuery = {}): Promise<Submiss
 }
 
 export async function getSubmission(id: string): Promise<Submission | null> {
-  const snap = await getDoc(doc(db, 'submissions', id))
+  const snap = await getDocFromServer(doc(db, 'submissions', id))
   return snap.exists() ? ({ id: snap.id, ...snap.data() } as Submission) : null
 }
 
