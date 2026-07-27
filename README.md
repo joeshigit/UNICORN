@@ -109,10 +109,23 @@ npx firebase emulators:start --project demo-unicorn
 
 ### 3. 部署
 
+專案已經在 `.firebaserc` 指定成 `unicorn-dcs`，不用每次加 `--project`。
+
 ```bash
-cd web && npm run build      # 輸出靜態檔到 web/out
-cd .. && firebase deploy     # hosting + firestore + storage
+firebase login
+
+# 先只推規則與索引，確認沒問題
+firebase deploy --only firestore:rules,firestore:indexes,storage
+
+# 再推前端
+cd web && npm run build && cd ..
+firebase deploy --only hosting
 ```
+
+第一次部署索引要等幾分鐘才建好，這期間資料池查詢可能會報缺索引的錯。
+
+> ⚠️ 新的 rules 會把 `submissions` 的更新鎖死、把 `optionSets` 的直接寫入打開，
+> 跟舊版多角色系統的行為不同。正式環境有既有資料的話，建議先開一個 dev 專案驗證。
 
 ### 4. 第一次進系統
 
