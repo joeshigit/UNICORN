@@ -65,8 +65,16 @@ function SubmitForm() {
 
       const initial: Record<string, unknown> = {}
       for (const field of found.fields) {
-        if (source && source[field.key] !== undefined) {
-          initial[field.key] = source[field.key]
+        const previous = source?.[field.key]
+        if (previous !== undefined) {
+          // 下拉一律存成陣列，但單選的輸入元件要的是單一值
+          if (field.type === 'dropdown' && !field.multiple) {
+            initial[field.key] = Array.isArray(previous) ? (previous[0] ?? '') : previous
+          } else if (field.type === 'dropdown' && field.multiple) {
+            initial[field.key] = Array.isArray(previous) ? previous : [previous]
+          } else {
+            initial[field.key] = previous
+          }
         } else if (field.type === 'file' || (field.type === 'dropdown' && field.multiple)) {
           initial[field.key] = []
         } else {
@@ -129,6 +137,7 @@ function SubmitForm() {
     try {
       // 寫入當下就把顯示用的文字凍結起來，之後改選項池也不會動到歷史資料
       const optionLabels: Record<string, string> = {}
+      const optionOrder: Record<string, string[]> = {}
       const files: FileInfo[] = []
       const payload: Record<string, unknown> = {}
 
@@ -146,16 +155,21 @@ function SubmitForm() {
 
         if (field.type === 'dropdown' && field.optionSetId) {
           const items = optionsBySet[field.optionSetId] || []
-          const labelOf = (v: string) => items.find(i => i.value === v)?.label || v
-          if (Array.isArray(value)) {
-            if (value.length > 0) optionLabels[field.key] = (value as string[]).map(labelOf).join('、')
-          } else if (value) {
-            optionLabels[field.key] = labelOf(value as string)
+          // 交給 db 層決定標準順序，這裡只提供選項池的排序依據
+          optionOrder[field.key] = items.map(i => i.value)
+
+          const picked = Array.isArray(value) ? (value as string[]) : value ? [value as string] : []
+          if (picked.length > 0) {
+            // 顯示用的標籤也照同一個順序，才不會跟組合字串對不起來
+            optionLabels[field.key] = items
+              .filter(i => picked.includes(i.value))
+              .map(i => i.label)
+              .join('、')
           }
         }
       }
 
-      const input = { template, values: payload, files, optionLabels }
+      const input = { template, values: payload, files, optionLabels, optionOrder }
       const id = correctId
         ? await correctSubmission(correctId, input, email, draftId)
         : await createSubmission(input, email, draftId)

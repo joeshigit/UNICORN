@@ -35,6 +35,22 @@ const db = getFirestore()
 const log = (...a) => console.log(...a)
 const plan = []
 
+function asArray(value) {
+  if (Array.isArray(value)) return value.filter(v => v !== '' && v != null).map(String)
+  if (value === '' || value == null) return []
+  return [String(value)]
+}
+
+// 組合字串照選項池排序，跟舊資料存的先後無關
+function canonicalOrder(picked, order) {
+  const unique = Array.from(new Set(picked))
+  if (!order || order.length === 0) return unique.sort()
+  const rank = new Map(order.map((value, index) => [value, index]))
+  return unique.sort(
+    (a, b) => (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER)
+  )
+}
+
 function monthOf(value) {
   const d =
     value instanceof Timestamp ? value.toDate() : value ? new Date(value) : new Date()
@@ -112,7 +128,7 @@ async function migrateTemplates() {
 }
 
 // ---------- submissions ----------
-async function migrateSubmissions(templateNames) {
+async function migrateSubmissions(templateNames, templateFields, optionOrder) {
   const snap = await db.collection('submissions').get()
   log(`\n【提交資料】共 ${snap.size} 筆`)
 
@@ -166,6 +182,18 @@ async function migrateSubmissions(templateNames) {
     // 最關鍵的一個：沒有這個欄位，新版資料池完全看不到這筆
     if (d._isLatest === undefined) patch._isLatest = true
 
+    // 下拉欄位要補上三個衍生形狀（陣列 / 組合字串 / 數量），見 web/src/lib/keys.ts
+    for (const field of templateFields.get(templateId) ?? []) {
+      if (field.type !== 'dropdown') continue
+      const raw = patch[field.key] ?? d[field.key]
+      if (raw === undefined) continue
+
+      const picked = canonicalOrder(asArray(raw), optionOrder(field))
+      if (!Array.isArray(d[field.key])) patch[field.key] = picked
+      if (d[`${field.key}Combined`] === undefined) patch[`${field.key}Combined`] = picked.join(', ')
+      if (d[`${field.key}Count`] === undefined) patch[`${field.key}Count`] = picked.length
+    }
+
     if (Object.keys(patch).length > 0) {
       plan.push({ ref: doc.ref, patch, what: `submission ${doc.id}` })
     }
@@ -175,10 +203,22 @@ async function migrateSubmissions(templateNames) {
 // ---------- 執行 ----------
 const templateSnap = await db.collection('templates').get()
 const templateNames = new Map(templateSnap.docs.map(d => [d.id, d.data().name]))
+const templateFields = new Map(templateSnap.docs.map(d => [d.id, d.data().fields ?? []]))
+
+const optionSetSnap = await db.collection('optionSets').get()
+const orderById = new Map()
+const orderByCode = new Map()
+for (const doc of optionSetSnap.docs) {
+  const data = doc.data()
+  const values = (data.items ?? []).map(i => i.value)
+  orderById.set(doc.id, values)
+  if (data.code && (data.isMaster || !orderByCode.has(data.code))) orderByCode.set(data.code, values)
+}
+const optionOrder = field => orderById.get(field.optionSetId) ?? orderByCode.get(field.key)
 
 await migrateOptionSets()
 await migrateTemplates()
-await migrateSubmissions(templateNames)
+await migrateSubmissions(templateNames, templateFields, optionOrder)
 
 log(`\n──────────────────────────────`)
 log(`需要更新的文件：${plan.length} 筆`)

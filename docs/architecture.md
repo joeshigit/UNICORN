@@ -105,9 +105,33 @@ Unicorn 的規矩是每個 collection 都要能明確歸到某一層，歸不進
 | `_submittedMonth` | 按下送出 | `currentMonth()` | submission | 寫入即鎖 |
 | `_fieldKeys` | 按下送出 | 從 template 欄位清單抄 | submission | 寫入即鎖 |
 | `_isLatest` | 送出 / 更正 / 作廢 | 交易內同時寫兩份文件 | submission | 交棒後不可逆 |
+| `<key>` / `<key>Combined` / `<key>Count` | 按下送出 | `buildSubmissionDoc()` | submission | 寫入即鎖 |
 
 由前端算而不是 Cloud Function，是因為這套系統只有一位使用者，而且 Firestore 規則
 已經把「能寫什麼」限制死了。少一層後端，就少一個要部署與維護的東西。
+
+### 下拉欄位的三個形狀
+
+Firestore 沒辦法用同一個運算子同時處理「等於」和「包含」：`==` 對陣列要求整個陣列
+一模一樣，`array-contains` 對非陣列則永遠不成立。所以每個下拉欄位在寫入當下存三份：
+
+```js
+department:         ["教學部", "行政部"]   // array-contains：誰有份
+departmentCombined: "教學部, 行政部"       // ==：剛好是哪個組合（也是分組的鍵）
+departmentCount:    2                      // 跨了幾個
+```
+
+三條必須守的紀律：
+
+1. **只能在 `buildSubmissionDoc()` 裡產生。** 任何繞過它的寫入路徑（匯入腳本之類）
+   都會產出查不到的資料，而且不會報錯——跟舊資料缺 `_isLatest` 是同一類的靜默失敗。
+2. **組合字串照選項池排序**，不是使用者的點選順序，否則同一種組合會分裂成多個鍵。
+3. **單選複選一律都寫三份。** 這是重點：同一個 KEY 若在不同文件裡型別不同，
+   之後每個碰這份資料的人和工具都得記得處理兩種情況，漏一次就少一半資料。
+
+這是針對 Firestore 限制的對策，不是通則。加新的衍生欄位之前先問：這是平台逼的，
+還是只是還沒想清楚要問什麼問題。搬到 PostgreSQL 的話這三個裡有兩個可以直接丟掉，
+`GROUP BY` 就解決了。
 
 ---
 

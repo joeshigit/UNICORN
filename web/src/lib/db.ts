@@ -34,7 +34,7 @@ import {
   Timestamp,
 } from 'firebase/firestore'
 import { db } from './firebase'
-import { MODULE_CODE, ACTION_CODE } from './keys'
+import { MODULE_CODE, ACTION_CODE, combinedKey, countKey } from './keys'
 import type {
   FieldDefinition,
   FileInfo,
@@ -301,6 +301,23 @@ export interface SubmitInput {
   values: Record<string, unknown>
   files: FileInfo[]
   optionLabels: Record<string, string>
+  // 欄位 KEY → 該選項池的完整值清單，用來決定組合字串的標準順序
+  optionOrder: Record<string, string[]>
+}
+
+function asArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter(v => v !== '' && v != null).map(String)
+  if (value === '' || value == null) return []
+  return [String(value)]
+}
+
+// 組合字串一律照選項池的排序產生，跟使用者點選的先後無關。
+// 否則「A, B」和「B, A」會被當成兩種組合，分組統計就散了。
+function canonicalOrder(picked: string[], order?: string[]): string[] {
+  const unique = Array.from(new Set(picked))
+  if (!order || order.length === 0) return unique.sort()
+  const rank = new Map(order.map((value, index) => [value, index]))
+  return unique.sort((a, b) => (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER))
 }
 
 function buildSubmissionDoc(
@@ -308,7 +325,7 @@ function buildSubmissionDoc(
   userEmail: string,
   extra: Partial<Submission>
 ): Record<string, unknown> {
-  const { template, values, files, optionLabels } = input
+  const { template, values, files, optionLabels, optionOrder } = input
 
   const fieldLabels: Record<string, string> = {}
   const fieldKeys: string[] = []
@@ -335,8 +352,17 @@ function buildSubmissionDoc(
     ...extra,
   }
 
-  // Universal KEY 平鋪在頂層，跨表查詢直接 where(key, '==', value)
+  // Universal KEY 平鋪在頂層，跨表查詢直接 where(key, ...)
   for (const field of template.fields) {
+    // 下拉欄位一律寫成三個形狀，單選複選都一樣，見 lib/keys.ts
+    if (field.type === 'dropdown') {
+      const picked = canonicalOrder(asArray(values[field.key]), optionOrder[field.key])
+      payload[field.key] = picked
+      payload[combinedKey(field.key)] = picked.join(', ')
+      payload[countKey(field.key)] = picked.length
+      continue
+    }
+
     const value = values[field.key]
     if (value === undefined || value === '' || value === null) continue
     if (Array.isArray(value) && value.length === 0) continue
@@ -387,9 +413,12 @@ export async function voidSubmission(original: Submission, userEmail: string): P
   const originalId = original.id!
   const voidId = newId('submissions')
 
+  // 墓碑要帶著原本的資料，包含下拉欄位的三個衍生形狀
   const copy: Record<string, unknown> = {}
   for (const key of original._fieldKeys || []) {
-    if (original[key] !== undefined) copy[key] = original[key]
+    for (const candidate of [key, combinedKey(key), countKey(key)]) {
+      if (original[candidate] !== undefined) copy[candidate] = original[candidate]
+    }
   }
 
   await runTransaction(db, async tx => {
@@ -443,11 +472,28 @@ export async function querySubmissions(q: SubmissionQuery = {}): Promise<Submiss
   let rows: Submission[]
 
   if (hasFieldFilter) {
-    // 跨表查詢：只用單一欄位條件（自動索引），排序與其他條件在前端處理
-    const snap = await getDocsFromServer(
-      query(collection(db, 'submissions'), where(q.fieldKey!, '==', q.fieldValue!), fsLimit(max))
-    )
-    rows = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Submission[]
+    // 跨表查詢：只用單一欄位條件（自動索引），排序與其他條件在前端處理。
+    //
+    // 同時跑 == 和 array-contains：下拉欄位存的是陣列，但舊資料或非下拉欄位
+    // 存的是純值。Firestore 的 == 對陣列要求整個陣列一樣，array-contains 對
+    // 非陣列則永遠不成立，所以兩個都跑再合併才不會漏。
+    const [exact, contains] = await Promise.all([
+      getDocsFromServer(
+        query(collection(db, 'submissions'), where(q.fieldKey!, '==', q.fieldValue!), fsLimit(max))
+      ),
+      getDocsFromServer(
+        query(
+          collection(db, 'submissions'),
+          where(q.fieldKey!, 'array-contains', q.fieldValue!),
+          fsLimit(max)
+        )
+      ),
+    ])
+    const merged = new Map<string, Submission>()
+    for (const snap of [exact, contains]) {
+      for (const d of snap.docs) merged.set(d.id, { id: d.id, ...d.data() } as Submission)
+    }
+    rows = Array.from(merged.values())
   } else {
     const constraints: QueryConstraint[] = []
     if (!q.includeSuperseded) constraints.push(where('_isLatest', '==', true))

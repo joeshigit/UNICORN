@@ -8,6 +8,7 @@ import { useAuth } from '@/components/auth'
 import { EmptyState, ErrorBanner, PageHeader, Spinner, StatusChip } from '@/components/ui'
 import { SubmissionDetail } from '@/components/SubmissionDetail'
 import { listOptionSets, listTemplates, querySubmissions, recentMonths, toDate } from '@/lib/db'
+import { combinedKey, countKey } from '@/lib/keys'
 import { downloadCsv, toCsv } from '@/lib/csv'
 import type { OptionSet, Submission, SubmissionStatus, Template } from '@/types'
 
@@ -44,6 +45,7 @@ function DataPool() {
   const [fieldKey, setFieldKey] = useState('')
   const [fieldValue, setFieldValue] = useState('')
   const [includeSuperseded, setIncludeSuperseded] = useState(false)
+  const [withDerived, setWithDerived] = useState(false)
 
   useEffect(() => {
     Promise.all([listTemplates(), listOptionSets()])
@@ -118,15 +120,35 @@ function DataPool() {
       .map(([key, label]) => ({ key, label }))
   }, [activeTemplate, rows])
 
+  // 下拉欄位才有 <key>Count，用它判斷哪些欄位帶得出衍生欄位
+  const dropdownColumns = useMemo(
+    () => columns.filter(c => rows.some(row => row[countKey(c.key)] !== undefined)),
+    [columns, rows]
+  )
+
   const handleExport = () => {
     const headers = ['提交時間', '表格', '版本', '狀態', ...columns.map(c => `${c.label} (${c.key})`)]
-    const data = rows.map(row => [
-      formatSubmittedAt(row),
-      row._templateName,
-      `v${row._templateVersion}`,
-      row._status,
-      ...columns.map(c => displayValue(row, c.key)),
-    ])
+    const extraColumns = withDerived ? dropdownColumns : []
+    for (const column of extraColumns) {
+      headers.push(`${column.label} 組合值 (${combinedKey(column.key)})`)
+      headers.push(`${column.label} 數量 (${countKey(column.key)})`)
+    }
+
+    const data = rows.map(row => {
+      const cells: unknown[] = [
+        formatSubmittedAt(row),
+        row._templateName,
+        `v${row._templateVersion}`,
+        row._status,
+        ...columns.map(c => displayValue(row, c.key)),
+      ]
+      for (const column of extraColumns) {
+        cells.push(row[combinedKey(column.key)] ?? '')
+        cells.push(row[countKey(column.key)] ?? '')
+      }
+      return cells
+    })
+
     const name = activeTemplate ? activeTemplate.name : 'unicorn'
     downloadCsv(`${name}_${new Date().toISOString().slice(0, 10)}.csv`, toCsv(headers, data))
   }
@@ -231,15 +253,29 @@ function DataPool() {
             </select>
           </div>
 
-          <label className="flex cursor-pointer items-center gap-2 self-end pb-2.5 text-sm text-slate-600">
-            <input
-              type="checkbox"
-              className="rounded text-unicorn-600 focus:ring-unicorn-500"
-              checked={includeSuperseded}
-              onChange={e => setIncludeSuperseded(e.target.checked)}
-            />
-            連被更正的舊版本一起看
-          </label>
+          <div className="flex flex-col justify-end gap-2 pb-1.5">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                checked={includeSuperseded}
+                onChange={e => setIncludeSuperseded(e.target.checked)}
+              />
+              連被更正的舊版本一起看
+            </label>
+            <label
+              className="flex cursor-pointer items-center gap-2 text-sm text-slate-600"
+              title="下拉欄位除了顯示值，另外帶出組合字串與選了幾個，方便做樞紐分析"
+            >
+              <input
+                type="checkbox"
+                className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                checked={withDerived}
+                onChange={e => setWithDerived(e.target.checked)}
+              />
+              匯出時帶出組合值與數量
+            </label>
+          </div>
         </div>
       </div>
 

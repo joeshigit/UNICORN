@@ -42,6 +42,34 @@ export const FIXED_KEYS: Record<string, FixedKeyMeta> = {
 
 export const FIXED_KEY_GROUPS = ['文字', '數字', '日期時間', '檔案'] as const
 
+// ============================================
+// 🦄 下拉欄位的衍生欄位
+//
+// 每個 dropdown 在送出當下會寫成三個欄位（不管單選還是複選）：
+//   school          ["粵華中學","培正中學"]   陣列 → array-contains 查「有沒有包含」
+//   schoolCombined  "粵華中學, 培正中學"      標準順序的組合字串 → == 查「剛好是這個組合」
+//   schoolCount     2                        數量 → 查「跨了幾個」
+//
+// 單選也一樣寫三個，這樣同一個 KEY 不會有時候是字串有時候是陣列。
+// 建表的人只勾「可複選」，看不到也不用管這三個欄位。
+// ============================================
+
+export const COMBINED_SUFFIX = 'Combined'
+export const COUNT_SUFFIX = 'Count'
+export const DERIVED_SUFFIXES = [COMBINED_SUFFIX, COUNT_SUFFIX]
+
+export function combinedKey(key: string): string {
+  return `${key}${COMBINED_SUFFIX}`
+}
+
+export function countKey(key: string): string {
+  return `${key}${COUNT_SUFFIX}`
+}
+
+export function isDerivedKey(key: string): boolean {
+  return DERIVED_SUFFIXES.some(suffix => key.endsWith(suffix))
+}
+
 export function isFixedKey(key: string): boolean {
   return Object.prototype.hasOwnProperty.call(FIXED_KEYS, key)
 }
@@ -58,5 +86,8 @@ export function validateOptionSetCode(code: string): string | null {
     return 'KEY 只能用英文字母與數字，且必須小寫開頭（例：school、costCenter）'
   }
   if (isFixedKey(code)) return `「${code}」已經是系統固定 KEY，請換一個`
+  if (isDerivedKey(code)) {
+    return `KEY 不能用 ${DERIVED_SUFFIXES.join(' / ')} 結尾，這些是系統自動產生的欄位`
+  }
   return null
 }
