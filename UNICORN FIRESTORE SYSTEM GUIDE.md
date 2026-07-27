@@ -36,6 +36,9 @@ SECTION 1 — UNIVERSAL KEY 設計原則
 
 ### Universal Keys（系統固定列表）
 
+> 下表是設計時的參考清單。實際跑在系統裡的固定 KEY 以 `web/src/lib/keys.ts`
+> 的 `FIXED_KEYS` 為準，dropdown KEY 則來自 `optionSets` 的 `code`。
+
 | KEY | 類型 | 說明 |
 |-----|------|------|
 | `school` | optionSet | 學校 |
