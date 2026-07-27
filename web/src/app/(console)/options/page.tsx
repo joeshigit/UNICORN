@@ -2,15 +2,23 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Layers, PenSquare, Plus, Trash2 } from 'lucide-react'
 import { useAuth } from '@/components/auth'
 import { EmptyState, ErrorBanner, PageHeader, Spinner } from '@/components/ui'
-import { createOptionSet, deleteOptionSet, ensureCoreOptionSets, listOptionSets } from '@/lib/db'
+import {
+  createOptionSet,
+  deleteOptionSet,
+  ensureCoreOptionSets,
+  listOptionSets,
+  listTemplates,
+} from '@/lib/db'
 import { RESERVED_CODES, validateOptionSetCode } from '@/lib/keys'
 import type { OptionSet } from '@/types'
 
 export default function OptionsPage() {
   const { email } = useAuth()
+  const router = useRouter()
   const [sets, setSets] = useState<OptionSet[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -61,21 +69,35 @@ export default function OptionsPage() {
         { code: newCode.trim(), name: newName.trim(), isMaster: true, items: [] },
         email
       )
-      window.location.href = `/options/edit?id=${id}`
+      router.push(`/options/edit?id=${id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : '建立失敗')
       setSaving(false)
     }
   }
 
-  const handleDelete = async (set: OptionSet) => {
+  const handleDelete = async (set: OptionSet, subsetCount = 0) => {
     if (RESERVED_CODES.includes(set.code) && set.isMaster) {
       alert('module / action 是系統用的分類，不能刪除。')
       return
     }
-    if (!confirm(`確定刪除「${set.name}」？已提交的資料不受影響。`)) return
-    await deleteOptionSet(set.id!)
-    load()
+    if (subsetCount > 0) {
+      alert(`「${set.name}」底下還有 ${subsetCount} 個子集，先把子集刪掉。`)
+      return
+    }
+    try {
+      const templates = await listTemplates()
+      const inUse = templates.filter(t => t.fields.some(f => f.optionSetId === set.id))
+      if (inUse.length > 0) {
+        alert(`「${set.name}」還被這些表格用著，先改掉表格再刪：\n${inUse.map(t => t.name).join('\n')}`)
+        return
+      }
+      if (!confirm(`確定刪除「${set.name}」？已提交的資料不受影響。`)) return
+      await deleteOptionSet(set.id!)
+      load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '刪除失敗')
+    }
   }
 
   return (
@@ -163,13 +185,21 @@ export default function OptionsPage() {
                         編輯選項
                       </Link>
                       {!RESERVED_CODES.includes(group.code) && (
-                        <Link
-                          href={`/options/edit?subsetOf=${group.master.id}`}
-                          className="btn-ghost btn-sm"
-                        >
-                          <Layers className="h-3.5 w-3.5" />
-                          建立子集
-                        </Link>
+                        <>
+                          <Link
+                            href={`/options/edit?subsetOf=${group.master.id}`}
+                            className="btn-ghost btn-sm"
+                          >
+                            <Layers className="h-3.5 w-3.5" />
+                            建立子集
+                          </Link>
+                          <button
+                            className="btn-ghost btn-sm text-red-500"
+                            onClick={() => handleDelete(group.master!, group.subsets.length)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </>
                       )}
                     </>
                   )}
