@@ -1,25 +1,20 @@
 rules_version = '2';
+
+// ============================================
+// 🦄 UNICORN Capture（單人版）— Storage 規則
+// 只有擁有者能讀寫 uploads/，單檔上限 20MB。
+// ============================================
+
 service firebase.storage {
   match /b/{bucket}/o {
-    // 只有經過驗證且是公司網域的用戶才能存取
-    function isCompanyUser() {
-      return request.auth != null && 
-             request.auth.token.email.matches('.*@dbyv\\.org$');
+
+    function isOwner() {
+      return request.auth != null && request.auth.token.email.lower() == 'joeshi@dbyv.org';
     }
-    
-    // uploads 資料夾
+
     match /uploads/{allPaths=**} {
-      // 讀取：公司用戶都可以
-      allow read: if isCompanyUser();
-      // 寫入：只允許透過 Cloud Functions（服務帳號）
-      allow write: if false;
+      allow read: if isOwner();
+      allow write: if isOwner() && request.resource.size < 20 * 1024 * 1024;
     }
   }
 }
-
-
-
-
-
-
-

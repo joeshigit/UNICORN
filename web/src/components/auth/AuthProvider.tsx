@@ -1,73 +1,47 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
-import { User } from 'firebase/auth'
-import { onAuthChange, isLeader, isDeveloper, signOut as authSignOut } from '@/lib/auth'
-import { useRouter } from 'next/navigation'
+import type { User } from 'firebase/auth'
+import { onAuthChange, signOut as authSignOut, isOwnerEmail } from '@/lib/auth'
 
-interface AuthContextType {
+interface AuthContextValue {
   user: User | null
+  email: string
   loading: boolean
-  isLeader: boolean
-  isDeveloper: boolean
+  isOwner: boolean
   signOut: () => Promise<void>
 }
 
-const AuthContext = createContext<AuthContextType>({
+const AuthContext = createContext<AuthContextValue>({
   user: null,
+  email: '',
   loading: true,
-  isLeader: false,
-  isDeveloper: false,
+  isOwner: false,
   signOut: async () => {},
 })
 
-// AuthProvider 元件
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
-  const router = useRouter()
 
   useEffect(() => {
-    // 監聯登入狀態變化
-    const unsubscribe = onAuthChange((user) => {
-      setUser(user)
+    return onAuthChange(nextUser => {
+      setUser(nextUser)
       setLoading(false)
     })
-
-    // 清理訂閱
-    return () => unsubscribe()
   }, [])
 
-  const handleSignOut = async () => {
-    try {
-      await authSignOut()
-      router.push('/login')
-    } catch (error) {
-      console.error('登出失敗:', error)
-    }
-  }
-
-  const value: AuthContextType = {
+  const value: AuthContextValue = {
     user,
+    email: user?.email || '',
     loading,
-    isLeader: isLeader(user),
-    isDeveloper: isDeveloper(user),
-    signOut: handleSignOut,
+    isOwner: isOwnerEmail(user?.email),
+    signOut: authSignOut,
   }
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  )
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
-// useAuth Hook
-export function useAuth(): AuthContextType {
-  const context = useContext(AuthContext)
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider')
-  }
-  return context
+export function useAuth(): AuthContextValue {
+  return useContext(AuthContext)
 }
-

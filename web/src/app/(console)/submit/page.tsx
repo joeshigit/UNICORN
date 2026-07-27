@@ -1,0 +1,279 @@
+'use client'
+
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { ArrowLeft, CheckCircle2 } from 'lucide-react'
+import { useAuth } from '@/components/auth'
+import { FieldInput } from '@/components/form'
+import { EmptyState, ErrorBanner, PageHeader, Spinner } from '@/components/ui'
+import {
+  createSubmission,
+  correctSubmission,
+  getOptionSet,
+  getSubmission,
+  getTemplate,
+  newSubmissionId,
+} from '@/lib/db'
+import type { FileInfo, OptionItem, Submission, Template } from '@/types'
+
+function SubmitForm() {
+  const router = useRouter()
+  const params = useSearchParams()
+  const { email } = useAuth()
+
+  const templateId = params.get('form') || ''
+  const correctId = params.get('correct') || ''
+
+  const [template, setTemplate] = useState<Template | null>(null)
+  const [optionsBySet, setOptionsBySet] = useState<Record<string, OptionItem[]>>({})
+  const [values, setValues] = useState<Record<string, unknown>>({})
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [submitError, setSubmitError] = useState('')
+  const [savedId, setSavedId] = useState('')
+  const [draftId, setDraftId] = useState(() => newSubmissionId())
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setLoadError('')
+    try {
+      const found = await getTemplate(templateId)
+      if (!found) throw new Error('找不到這張表格')
+      setTemplate(found)
+
+      const setIds = Array.from(
+        new Set(found.fields.filter(f => f.type === 'dropdown' && f.optionSetId).map(f => f.optionSetId!))
+      )
+      const loaded: Record<string, OptionItem[]> = {}
+      await Promise.all(
+        setIds.map(async setId => {
+          const optionSet = await getOptionSet(setId)
+          if (optionSet) loaded[setId] = optionSet.items
+        })
+      )
+      setOptionsBySet(loaded)
+
+      let source: Submission | null = null
+      if (correctId) {
+        source = await getSubmission(correctId)
+        if (!source) throw new Error('找不到要更正的紀錄')
+        if (source._isLatest !== true) throw new Error('這筆紀錄已經有更新的版本了')
+      }
+
+      const initial: Record<string, unknown> = {}
+      for (const field of found.fields) {
+        if (source && source[field.key] !== undefined) {
+          initial[field.key] = source[field.key]
+        } else if (field.type === 'file' || (field.type === 'dropdown' && field.multiple)) {
+          initial[field.key] = []
+        } else {
+          initial[field.key] = ''
+        }
+      }
+      if (source) {
+        for (const field of found.fields) {
+          if (field.type !== 'file') continue
+          initial[field.key] = (source.files || []).filter(f => f.fieldKey === field.key)
+        }
+      }
+      setValues(initial)
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : '載入失敗')
+    } finally {
+      setLoading(false)
+    }
+  }, [templateId, correctId])
+
+  useEffect(() => {
+    if (!templateId) {
+      setLoadError('沒有指定表格')
+      setLoading(false)
+      return
+    }
+    load()
+  }, [templateId, load])
+
+  const sortedFields = useMemo(
+    () => (template ? [...template.fields].sort((a, b) => a.order - b.order) : []),
+    [template]
+  )
+
+  const setValue = (key: string, value: unknown) => {
+    setValues(prev => ({ ...prev, [key]: value }))
+    setErrors(prev => (prev[key] ? { ...prev, [key]: '' } : prev))
+  }
+
+  const validate = (): boolean => {
+    const next: Record<string, string> = {}
+    for (const field of sortedFields) {
+      if (!field.required) continue
+      const value = values[field.key]
+      const empty = Array.isArray(value)
+        ? value.length === 0
+        : value === '' || value === null || value === undefined
+      if (empty) next[field.key] = '此欄位必填'
+    }
+    setErrors(next)
+    return Object.keys(next).length === 0
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!template || !validate()) return
+
+    setSaving(true)
+    setSubmitError('')
+    try {
+      // 寫入當下就把顯示用的文字凍結起來，之後改選項池也不會動到歷史資料
+      const optionLabels: Record<string, string> = {}
+      const files: FileInfo[] = []
+      const payload: Record<string, unknown> = {}
+
+      for (const field of sortedFields) {
+        const value = values[field.key]
+
+        if (field.type === 'file') {
+          const list = Array.isArray(value) ? (value as FileInfo[]) : []
+          files.push(...list)
+          payload[field.key] = list.length
+          continue
+        }
+
+        payload[field.key] = value
+
+        if (field.type === 'dropdown' && field.optionSetId) {
+          const items = optionsBySet[field.optionSetId] || []
+          const labelOf = (v: string) => items.find(i => i.value === v)?.label || v
+          if (Array.isArray(value)) {
+            if (value.length > 0) optionLabels[field.key] = (value as string[]).map(labelOf).join('、')
+          } else if (value) {
+            optionLabels[field.key] = labelOf(value as string)
+          }
+        }
+      }
+
+      const input = { template, values: payload, files, optionLabels }
+      const id = correctId
+        ? await correctSubmission(correctId, input, email, draftId)
+        : await createSubmission(input, email, draftId)
+
+      setSavedId(id)
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : '送出失敗')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const resetForAnother = () => {
+    setSavedId('')
+    setDraftId(newSubmissionId())
+    router.replace(`/submit?form=${templateId}`)
+    load()
+  }
+
+  if (loading) return <Spinner label="載入表格中" />
+
+  if (loadError || !template) {
+    return (
+      <>
+        <PageHeader title="填報" />
+        <ErrorBanner message={loadError || '找不到表格'} />
+        <Link href="/fill" className="btn-secondary">
+          回到填報中心
+        </Link>
+      </>
+    )
+  }
+
+  if (savedId) {
+    return (
+      <div className="card mx-auto max-w-lg px-6 py-12 text-center">
+        <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-500" />
+        <h2 className="mt-4 text-xl font-semibold">
+          {correctId ? '更正完成' : '已送出'}
+        </h2>
+        <p className="mt-1 text-sm text-slate-500">{template.name}</p>
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          <button className="btn-primary" onClick={resetForAnother}>
+            再填一筆
+          </button>
+          <Link href={`/data?form=${templateId}`} className="btn-secondary">
+            查看資料
+          </Link>
+          <Link href="/fill" className="btn-ghost">
+            回填報中心
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <Link href={correctId ? '/data' : '/fill'} className="btn-ghost btn-sm mb-4 -ml-3">
+        <ArrowLeft className="h-4 w-4" />
+        {correctId ? '回資料池' : '回填報中心'}
+      </Link>
+
+      <PageHeader
+        title={template.name}
+        description={template.description || `${template.moduleId} · ${template.actionId}`}
+      />
+
+      {correctId && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          更正模式：送出後會建立一筆新紀錄，原紀錄保留不動，只會標記為已被更正。
+        </div>
+      )}
+
+      {submitError && <ErrorBanner message={submitError} />}
+
+      {sortedFields.length === 0 ? (
+        <EmptyState title="這張表格還沒有欄位" />
+      ) : (
+        <form onSubmit={handleSubmit} className="card space-y-5 p-6">
+          {sortedFields.map(field => (
+            <div key={field.key}>
+              <label className="label mb-1.5">
+                {field.label}
+                {field.required && <span className="ml-1 text-red-500">*</span>}
+              </label>
+              <FieldInput
+                field={field}
+                value={values[field.key]}
+                onChange={value => setValue(field.key, value)}
+                options={field.optionSetId ? optionsBySet[field.optionSetId] || [] : []}
+                error={errors[field.key]}
+                submissionId={draftId}
+                userEmail={email}
+              />
+              {errors[field.key] ? (
+                <p className="mt-1 text-sm text-red-600">{errors[field.key]}</p>
+              ) : (
+                field.helpText && <p className="hint mt-1">{field.helpText}</p>
+              )}
+            </div>
+          ))}
+
+          <div className="border-t border-slate-100 pt-4">
+            <button type="submit" className="btn-primary w-full" disabled={saving}>
+              {saving ? '送出中…' : correctId ? '送出更正' : '送出'}
+            </button>
+          </div>
+        </form>
+      )}
+    </>
+  )
+}
+
+export default function SubmitPage() {
+  return (
+    <Suspense fallback={<Spinner />}>
+      <SubmitForm />
+    </Suspense>
+  )
+}

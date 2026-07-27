@@ -1,138 +1,66 @@
 {
   "indexes": [
     {
-      "collectionGroup": "templates",
+      "collectionGroup": "submissions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "enabled", "order": "ASCENDING" },
-        { "fieldPath": "moduleId", "order": "ASCENDING" },
-        { "fieldPath": "actionId", "order": "ASCENDING" }
+        { "fieldPath": "_isLatest", "order": "ASCENDING" },
+        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
       ]
     },
     {
       "collectionGroup": "submissions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "createdBy", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        { "fieldPath": "_isLatest", "order": "ASCENDING" },
+        { "fieldPath": "_templateId", "order": "ASCENDING" },
+        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
       ]
     },
     {
       "collectionGroup": "submissions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "templateId", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "optionRequests",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "requestedBy", "order": "ASCENDING" },
-        { "fieldPath": "requestedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "optionRequests",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "requestedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "optionSetDrafts",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "createdBy", "order": "ASCENDING" },
-        { "fieldPath": "updatedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "optionSetDrafts",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "submittedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "templateDrafts",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "createdBy", "order": "ASCENDING" },
-        { "fieldPath": "updatedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "templateDrafts",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "submittedAt", "order": "DESCENDING" }
+        { "fieldPath": "_isLatest", "order": "ASCENDING" },
+        { "fieldPath": "_submittedMonth", "order": "ASCENDING" },
+        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
       ]
     },
     {
       "collectionGroup": "submissions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "_reverseOf", "order": "ASCENDING" },
-        { "fieldPath": "_status", "order": "ASCENDING" }
+        { "fieldPath": "_isLatest", "order": "ASCENDING" },
+        { "fieldPath": "_templateId", "order": "ASCENDING" },
+        { "fieldPath": "_submittedMonth", "order": "ASCENDING" },
+        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
       ]
     },
     {
       "collectionGroup": "submissions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "_correctFor", "order": "ASCENDING" },
-        { "fieldPath": "_status", "order": "ASCENDING" }
+        { "fieldPath": "_templateId", "order": "ASCENDING" },
+        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
       ]
     },
     {
-      "collectionGroup": "userFormStats",
+      "collectionGroup": "submissions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "userEmail", "order": "ASCENDING" },
-        { "fieldPath": "isFavorite", "order": "ASCENDING" },
-        { "fieldPath": "lastUsedAt", "order": "DESCENDING" }
+        { "fieldPath": "_submittedMonth", "order": "ASCENDING" },
+        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
       ]
     },
     {
-      "collectionGroup": "userFormStats",
+      "collectionGroup": "submissions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "userEmail", "order": "ASCENDING" },
-        { "fieldPath": "useCount", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "userFormStats",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "userEmail", "order": "ASCENDING" },
-        { "fieldPath": "lastUsedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "templateSuggestions",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "suggesterEmail", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "formAccessRequests",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "requesterEmail", "order": "ASCENDING" },
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "requestedAt", "order": "DESCENDING" }
+        { "fieldPath": "_templateId", "order": "ASCENDING" },
+        { "fieldPath": "_submittedMonth", "order": "ASCENDING" },
+        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
       ]
     }
   ],
   "fieldOverrides": []
 }
-
-

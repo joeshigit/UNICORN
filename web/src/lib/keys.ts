@@ -1,0 +1,62 @@
+// ============================================
+// 🦄 UNICORN: Universal KEY 目錄
+//
+// KEY   = 系統統一的欄位名稱，跨所有表格相同（school、quantity1…）
+// LABEL = UI 顯示名稱，建表時自由設計（「入營學校」「駐守學校」…）
+// VALUE = 標準化的值，dropdown 一律來自 optionSet
+//
+// KEY 有兩個來源：
+//   1. FIXED_KEYS       — 這裡寫死的通用欄位
+//   2. optionSet.code   — 每建一個選項池就多一個 dropdown KEY
+// ============================================
+
+import type { FieldType } from '@/types'
+
+export interface FixedKeyMeta {
+  type: FieldType
+  label: string
+  group: string
+}
+
+export const FIXED_KEYS: Record<string, FixedKeyMeta> = {
+  title: { type: 'text', label: '標題', group: '文字' },
+  text1: { type: 'text', label: '單行文字 1', group: '文字' },
+  text2: { type: 'text', label: '單行文字 2', group: '文字' },
+  note: { type: 'textarea', label: '多行文字 1', group: '文字' },
+  note2: { type: 'textarea', label: '多行文字 2', group: '文字' },
+
+  quantity1: { type: 'number', label: '數量 1', group: '數字' },
+  quantity2: { type: 'number', label: '數量 2', group: '數字' },
+  quantity3: { type: 'number', label: '數量 3', group: '數字' },
+  amount1: { type: 'number', label: '金額 1', group: '數字' },
+  amount2: { type: 'number', label: '金額 2', group: '數字' },
+
+  dateOnlyStart: { type: 'date', label: '開始日期', group: '日期時間' },
+  dateOnlyEnd: { type: 'date', label: '結束日期', group: '日期時間' },
+  dateTimeStart: { type: 'datetime', label: '開始日期時間', group: '日期時間' },
+  dateTimeEnd: { type: 'datetime', label: '結束日期時間', group: '日期時間' },
+
+  upload: { type: 'file', label: '檔案上傳 1', group: '檔案' },
+  upload2: { type: 'file', label: '檔案上傳 2', group: '檔案' },
+}
+
+export const FIXED_KEY_GROUPS = ['文字', '數字', '日期時間', '檔案'] as const
+
+export function isFixedKey(key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(FIXED_KEYS, key)
+}
+
+// 表格分類 / 動作也是選項池，用這兩個保留 code 管理
+export const MODULE_CODE = 'module'
+export const ACTION_CODE = 'action'
+export const RESERVED_CODES = [MODULE_CODE, ACTION_CODE]
+
+// 選項池的 code 就是 dropdown 欄位的 KEY，必須是安全的識別字
+export function validateOptionSetCode(code: string): string | null {
+  if (!code.trim()) return '請輸入 KEY'
+  if (!/^[a-z][a-zA-Z0-9]*$/.test(code)) {
+    return 'KEY 只能用英文字母與數字，且必須小寫開頭（例：school、costCenter）'
+  }
+  if (isFixedKey(code)) return `「${code}」已經是系統固定 KEY，請換一個`
+  return null
+}

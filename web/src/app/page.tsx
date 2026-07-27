@@ -1,80 +1,69 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Sparkles } from 'lucide-react'
 import { useAuth } from '@/components/auth'
-import { LoginButton } from '@/components/auth'
-import { Loader2, Sparkles } from 'lucide-react'
+import { signInWithGoogle } from '@/lib/auth'
+import { isFirebaseConfigured } from '@/lib/firebase'
+import { APP_NAME, APP_SUBTITLE } from '@/lib/config'
+import { ErrorBanner, Spinner } from '@/components/ui'
 
-export default function HomePage() {
+export default function LoginPage() {
   const { user, loading } = useAuth()
   const router = useRouter()
+  const [signingIn, setSigningIn] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!loading && user) {
-      router.push('/staff')
+    if (!loading && user) router.replace('/fill')
+  }, [loading, user, router])
+
+  const handleSignIn = async () => {
+    setSigningIn(true)
+    setError('')
+    try {
+      await signInWithGoogle()
+      router.replace('/fill')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '登入失敗')
+    } finally {
+      setSigningIn(false)
     }
-  }, [user, loading, router])
+  }
 
-  // 載入中
-  if (loading) {
+  if (loading || user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-unicorn-50 to-white">
-        <Loader2 className="w-8 h-8 animate-spin text-unicorn-600" />
+      <div className="flex min-h-screen items-center justify-center">
+        <Spinner />
       </div>
     )
   }
 
-  // 已登入（等待跳轉）
-  if (user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-unicorn-50 to-white">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 animate-spin text-unicorn-600" />
-          <p className="text-gray-500">正在跳轉...</p>
-        </div>
-      </div>
-    )
-  }
-
-  // 未登入 → 顯示登入頁
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-unicorn-50 via-white to-unicorn-50">
-      <div className="text-center">
-        {/* Logo */}
-        <div className="mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-unicorn-100 rounded-2xl mb-4">
-            <Sparkles className="w-10 h-10 text-unicorn-600" />
-          </div>
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">
-            獨角獸
-          </h1>
-          <p className="text-lg text-unicorn-600 font-medium">
-            Unicorn DataCaptureSystem
-          </p>
+    <div className="flex min-h-screen items-center justify-center px-6">
+      <div className="w-full max-w-sm text-center">
+        <span className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-unicorn-100">
+          <Sparkles className="h-8 w-8 text-unicorn-600" />
+        </span>
+        <h1 className="text-3xl font-bold tracking-tight">{APP_NAME}</h1>
+        <p className="mt-1 text-sm font-medium text-unicorn-600">{APP_SUBTITLE}</p>
+        <p className="mt-4 text-sm text-slate-500">
+          自己建表、自己填、資料全部落在同一個池子裡。
+        </p>
+
+        <div className="mt-8">
+          {isFirebaseConfigured ? (
+            <button className="btn-primary w-full" onClick={handleSignIn} disabled={signingIn}>
+              {signingIn ? '登入中…' : '使用 Google 帳號登入'}
+            </button>
+          ) : (
+            <ErrorBanner message="找不到 Firebase 設定，請先照 web/env.example 建立 .env.local 再重新 build。" />
+          )}
         </div>
 
-        {/* 說明 */}
-        <p className="text-gray-500 mb-8 max-w-md">
-          公司內部資料收集平台<br />
-          請使用公司 Google 帳號登入
-        </p>
-
-        {/* 登入按鈕 */}
-        <LoginButton />
-
-        {/* 版權 */}
-        <p className="mt-12 text-xs text-gray-400">
-          © 2025 獨角獸資料系統
-        </p>
+        {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
       </div>
     </div>
   )
 }
-
-
-
-
-
-
-

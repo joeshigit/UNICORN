@@ -6,26 +6,9 @@
   "storage": {
     "rules": "storage.rules"
   },
-  "functions": {
-    "source": "functions",
-    "codebase": "default",
-    "ignore": [
-      "node_modules",
-      ".git",
-      "firebase-debug.log",
-      "firebase-debug.*.log"
-    ],
-    "predeploy": [
-      "npm --prefix \"$RESOURCE_DIR\" run build"
-    ]
-  },
   "hosting": {
     "public": "web/out",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
       {
         "source": "**",
@@ -34,4 +17,3 @@
     ]
   }
 }
-
