@@ -34,7 +34,7 @@ import {
   Timestamp,
 } from 'firebase/firestore'
 import { db } from './firebase'
-import { MODULE_CODE, ACTION_CODE, combinedKey, countKey } from './keys'
+import { MODULE_CODE, ACTION_CODE, MANAGER_GROUP_CODE, combinedKey, countKey } from './keys'
 import type {
   FieldDefinition,
   FileInfo,
