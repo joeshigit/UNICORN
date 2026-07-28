@@ -22,14 +22,20 @@ export const FIXED_KEYS: Record<string, FixedKeyMeta> = {
   title: { type: 'text', label: '標題', group: '文字' },
   text1: { type: 'text', label: '單行文字 1', group: '文字' },
   text2: { type: 'text', label: '單行文字 2', group: '文字' },
+  text3: { type: 'text', label: '單行文字 3', group: '文字' },
+  text4: { type: 'text', label: '單行文字 4', group: '文字' },
   note: { type: 'textarea', label: '多行文字 1', group: '文字' },
   note2: { type: 'textarea', label: '多行文字 2', group: '文字' },
+  note3: { type: 'textarea', label: '多行文字 3', group: '文字' },
 
   quantity1: { type: 'number', label: '數量 1', group: '數字' },
   quantity2: { type: 'number', label: '數量 2', group: '數字' },
   quantity3: { type: 'number', label: '數量 3', group: '數字' },
+  quantity4: { type: 'number', label: '數量 4', group: '數字' },
+  quantity5: { type: 'number', label: '數量 5', group: '數字' },
   amount1: { type: 'number', label: '金額 1', group: '數字' },
   amount2: { type: 'number', label: '金額 2', group: '數字' },
+  amount3: { type: 'number', label: '金額 3', group: '數字' },
 
   dateOnlyStart: { type: 'date', label: '開始日期', group: '日期時間' },
   dateOnlyEnd: { type: 'date', label: '結束日期', group: '日期時間' },
@@ -38,6 +44,8 @@ export const FIXED_KEYS: Record<string, FixedKeyMeta> = {
 
   upload: { type: 'file', label: '檔案上傳 1', group: '檔案' },
   upload2: { type: 'file', label: '檔案上傳 2', group: '檔案' },
+  upload3: { type: 'file', label: '檔案上傳 3', group: '檔案' },
+  upload4: { type: 'file', label: '檔案上傳 4', group: '檔案' },
 }
 
 export const FIXED_KEY_GROUPS = ['文字', '數字', '日期時間', '檔案'] as const
