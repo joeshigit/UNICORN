@@ -464,7 +464,11 @@ export interface SubmissionQuery {
   max?: number
 }
 
-export async function querySubmissions(q: SubmissionQuery = {}): Promise<Submission[]> {
+export async function querySubmissions(
+  q: SubmissionQuery = {},
+  userEmail: string,
+  isSuperuser: boolean
+): Promise<Submission[]> {
   const max = q.max ?? 500
   const status = q.status ?? 'ACTIVE'
   const hasFieldFilter = !!(q.fieldKey && q.fieldValue)
@@ -477,15 +481,22 @@ export async function querySubmissions(q: SubmissionQuery = {}): Promise<Submiss
     // 同時跑 == 和 array-contains：下拉欄位存的是陣列，但舊資料或非下拉欄位
     // 存的是純值。Firestore 的 == 對陣列要求整個陣列一樣，array-contains 對
     // 非陣列則永遠不成立，所以兩個都跑再合併才不會漏。
+    const baseConstraints: QueryConstraint[] = [fsLimit(max)]
+    if (!isSuperuser) baseConstraints.push(where('_submitterEmail', '==', userEmail))
+
     const [exact, contains] = await Promise.all([
       getDocsFromServer(
-        query(collection(db, 'submissions'), where(q.fieldKey!, '==', q.fieldValue!), fsLimit(max))
+        query(
+          collection(db, 'submissions'),
+          where(q.fieldKey!, '==', q.fieldValue!),
+          ...baseConstraints
+        )
       ),
       getDocsFromServer(
         query(
           collection(db, 'submissions'),
           where(q.fieldKey!, 'array-contains', q.fieldValue!),
-          fsLimit(max)
+          ...baseConstraints
         )
       ),
     ])
@@ -496,6 +507,7 @@ export async function querySubmissions(q: SubmissionQuery = {}): Promise<Submiss
     rows = Array.from(merged.values())
   } else {
     const constraints: QueryConstraint[] = []
+    if (!isSuperuser) constraints.push(where('_submitterEmail', '==', userEmail))
     if (!q.includeSuperseded) constraints.push(where('_isLatest', '==', true))
     if (q.templateId) constraints.push(where('_templateId', '==', q.templateId))
     if (q.month) constraints.push(where('_submittedMonth', '==', q.month))

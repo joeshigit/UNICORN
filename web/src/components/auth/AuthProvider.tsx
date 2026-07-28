@@ -2,13 +2,13 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import type { User } from 'firebase/auth'
-import { onAuthChange, signOut as authSignOut, isOwnerEmail } from '@/lib/auth'
+import { onAuthChange, signOut as authSignOut, isSuperuserEmail } from '@/lib/auth'
 
 interface AuthContextValue {
   user: User | null
   email: string
   loading: boolean
-  isOwner: boolean
+  isSuperuser: boolean
   signOut: () => Promise<void>
 }
 
@@ -16,7 +16,7 @@ const AuthContext = createContext<AuthContextValue>({
   user: null,
   email: '',
   loading: true,
-  isOwner: false,
+  isSuperuser: false,
   signOut: async () => {},
 })
 
@@ -35,7 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     email: user?.email || '',
     loading,
-    isOwner: isOwnerEmail(user?.email),
+    isSuperuser: isSuperuserEmail(user?.email),
     signOut: authSignOut,
   }
 

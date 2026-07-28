@@ -30,7 +30,7 @@ function formatSubmittedAt(submission: Submission): string {
 
 function DataPool() {
   const params = useSearchParams()
-  const { email } = useAuth()
+  const { email, isSuperuser } = useAuth()
 
   const [templates, setTemplates] = useState<Template[]>([])
   const [optionSets, setOptionSets] = useState<OptionSet[]>([])
@@ -61,21 +61,25 @@ function DataPool() {
     setError('')
     try {
       setRows(
-        await querySubmissions({
-          templateId: templateId || undefined,
-          month: month || undefined,
-          status,
-          includeSuperseded,
-          fieldKey: fieldKey || undefined,
-          fieldValue: fieldKey && fieldValue ? fieldValue : undefined,
-        })
+        await querySubmissions(
+          {
+            templateId: templateId || undefined,
+            month: month || undefined,
+            status,
+            includeSuperseded,
+            fieldKey: fieldKey || undefined,
+            fieldValue: fieldKey && fieldValue ? fieldValue : undefined,
+          },
+          email,
+          isSuperuser
+        )
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : '查詢失敗')
     } finally {
       setLoading(false)
     }
-  }, [templateId, month, status, fieldKey, fieldValue, includeSuperseded])
+  }, [templateId, month, status, fieldKey, fieldValue, includeSuperseded, email, isSuperuser])
 
   useEffect(() => {
     runQuery()

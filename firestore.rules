@@ -1,11 +1,13 @@
 rules_version = '2';
 
 // ============================================
-// 🦄 UNICORN Capture（單人版）— Firestore 安全規則
+// 🦄 UNICORN Capture — Firestore 安全規則
 //
-// 只有一位擁有者。想換人或加人，改下面的 owner() 即可。
+// 支援多使用者 (Multi-User RBAC)：
+// - Superuser: 可以管理選項池、建表、看所有人的 submission。
+// - 一般使用者 (Submitter): 只能讀取表格來填寫，並且只能看/改「自己填的」submission。
 //
-// submissions 的重點：資料寫進去就不能改。
+// submissions 依然維持不可變：
 // 更正 / 作廢一律是「再寫一筆新的」，舊紀錄只允許翻動
 // _isLatest / _supersededBy 這兩個鏈頭指標。
 // ============================================
@@ -13,38 +15,52 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function owner() {
-      return 'joeshi@dbyv.org';
+    function isSuperuser() {
+      return request.auth != null && (
+        request.auth.token.email.lower() == 'joeshi@dbyv.org'
+        // Add other superusers here if needed
+      );
     }
 
-    function isOwner() {
-      return request.auth != null && request.auth.token.email.lower() == owner();
+    function isOwnerOfRecord() {
+      return request.auth != null && 
+             resource.data._submitterEmail.lower() == request.auth.token.email.lower();
+    }
+
+    function isCreatingOwnRecord() {
+      return request.auth != null && 
+             request.resource.data._submitterEmail.lower() == request.auth.token.email.lower();
     }
 
     // 選項池：Meaning Layer
+    // 只有 Superuser 可以看跟改
     match /optionSets/{optionSetId} {
-      allow read, write: if isOwner();
+      allow read, write: if isSuperuser();
     }
 
     // 表格定義：Template Layer（純資料）
+    // 所有登入使用者都可以讀取（為了填表），但只有 Superuser 可以建表/改表
     match /templates/{templateId} {
-      allow read, write: if isOwner();
+      allow read: if request.auth != null;
+      allow write: if isSuperuser();
     }
 
     // 單一資料池：Submission Layer（不可變事件）
     match /submissions/{submissionId} {
-      allow read: if isOwner();
+      // 讀取：Superuser 看全部，一般人只看自己填的
+      allow read: if isSuperuser() || isOwnerOfRecord();
 
-      allow create: if isOwner()
-                    && request.resource.data._submitterEmail.lower() == owner()
+      // 新增：任何登入者都可以新增，但 _submitterEmail 必須是自己
+      allow create: if isCreatingOwnRecord()
                     && request.resource.data._templateId is string
                     && request.resource.data._templateVersion is number
                     && request.resource.data._submittedMonth is string
                     && request.resource.data._isLatest == true
                     && request.resource.data._status in ['ACTIVE', 'VOID'];
 
-      // 唯一允許的更新：把鏈頭指標交棒給更正 / 作廢後的新紀錄
-      allow update: if isOwner()
+      // 更新：Superuser 可以更新任何人的指標，一般人只能更新自己的指標。
+      // 依然只允許把鏈頭指標交棒給更正 / 作廢後的新紀錄
+      allow update: if (isSuperuser() || isOwnerOfRecord())
                     && request.resource.data.diff(resource.data)
                          .affectedKeys().hasOnly(['_isLatest', '_supersededBy'])
                     && resource.data._isLatest == true

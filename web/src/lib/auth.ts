@@ -8,17 +8,13 @@ import {
   User,
 } from 'firebase/auth'
 import { auth } from './firebase'
-import { OWNER_EMAIL, isOwnerEmail } from './config'
+import { isSuperuserEmail } from './config'
 
 const googleProvider = new GoogleAuthProvider()
-googleProvider.setCustomParameters({ login_hint: OWNER_EMAIL })
+// googleProvider.setCustomParameters({ hd: 'dbyv.org' }) // Optional: Restrict to domain
 
 export async function signInWithGoogle(): Promise<User> {
   const result = await signInWithPopup(auth, googleProvider)
-  if (!isOwnerEmail(result.user.email)) {
-    await firebaseSignOut(auth)
-    throw new Error(`此系統只開放 ${OWNER_EMAIL} 使用`)
-  }
   return result.user
 }
 
@@ -30,4 +26,4 @@ export function onAuthChange(callback: (user: User | null) => void): () => void 
   return onAuthStateChanged(auth, callback)
 }
 
-export { isOwnerEmail }
+export { isSuperuserEmail }

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { ClipboardList, Database, LayoutGrid, ListTree, LogOut, Menu, Sparkles, X } from 'lucide-react'
 import { useAuth } from '@/components/auth'
-import { APP_NAME, APP_SUBTITLE, OWNER_EMAIL } from '@/lib/config'
+import { APP_NAME, APP_SUBTITLE, SUPERUSERS } from '@/lib/config'
 import { Spinner } from '@/components/ui'
 
 const NAV = [
@@ -16,7 +16,7 @@ const NAV = [
 ]
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { user, loading, isOwner, signOut } = useAuth()
+  const { user, loading, isSuperuser, signOut } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -37,25 +37,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     )
   }
 
-  if (!isOwner) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center">
-        <h1 className="text-xl font-semibold">此系統只開放給擁有者使用</h1>
-        <p className="text-sm text-slate-500">
-          目前登入：{user.email}
-          <br />
-          允許的帳號：{OWNER_EMAIL}
-        </p>
-        <button className="btn-secondary" onClick={() => signOut().then(() => router.replace('/'))}>
-          登出
-        </button>
-      </div>
-    )
-  }
+  // Active navigation based on user role
+  const activeNav = isSuperuser
+    ? NAV
+    : NAV.filter(item => item.label === '填報' || item.label === '資料池')
 
   const nav = (
     <nav className="space-y-1">
-      {NAV.map(item => {
+      {activeNav.map(item => {
         const active = pathname.startsWith(item.href)
         const Icon = item.icon
         return (

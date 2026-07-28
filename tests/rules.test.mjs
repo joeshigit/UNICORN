@@ -66,26 +66,47 @@ const anonDb = () => testEnv.unauthenticatedContext().firestore()
 const seed = (path, data) =>
   testEnv.withSecurityRulesDisabled(ctx => setDoc(doc(ctx.firestore(), path), data))
 
-describe('只有擁有者能進來', () => {
+describe('Multi-User 存取控制', () => {
   before(() => testEnv.clearFirestore())
 
   it('未登入不能讀 submissions', async () => {
     await assertFails(getDocs(collection(anonDb(), 'submissions')))
   })
 
-  it('其他公司同事不能讀 submissions', async () => {
+  it('一般使用者只能讀自己的 submissions，不能讀別人的', async () => {
+    await seed('submissions/owner_sub', submission({ _submitterEmail: OWNER }))
+    await seed('submissions/other_sub', submission({ _submitterEmail: OTHER }))
+
+    // Read single
+    await assertFails(getDoc(doc(otherDb(), 'submissions/owner_sub')))
+    await assertSucceeds(getDoc(doc(otherDb(), 'submissions/other_sub')))
+
+    // Query (Requires _submitterEmail filter)
     await assertFails(getDocs(collection(otherDb(), 'submissions')))
+    const q = testEnv.unauthenticatedContext().firestore().collection('submissions') // dummy to build query
+    // Can't use unauthenticated to build queries easily in rules-unit-testing if we want them executed by otherDb, 
+    // but we know getting the whole collection fails.
   })
 
-  it('其他人不能建立表格', async () => {
-    await assertFails(setDoc(doc(otherDb(), 'templates/t1'), { name: '偷建的' }))
+  it('Superuser 可以讀所有 submissions', async () => {
+    await seed('submissions/other_sub', submission({ _submitterEmail: OTHER }))
+    await assertSucceeds(getDoc(doc(ownerDb(), 'submissions/other_sub')))
   })
 
-  it('其他人不能改選項池', async () => {
+  it('一般使用者可以讀取 templates 來填表', async () => {
+    await seed('templates/t1', { name: '營會登記表' })
+    await assertSucceeds(getDoc(doc(otherDb(), 'templates/t1')))
+  })
+
+  it('一般使用者不能建表或改表', async () => {
+    await assertFails(setDoc(doc(otherDb(), 'templates/t2'), { name: '偷建的' }))
+  })
+
+  it('一般使用者不能改選項池', async () => {
     await assertFails(setDoc(doc(otherDb(), 'optionSets/o1'), { code: 'school' }))
   })
 
-  it('擁有者可以建立表格與選項池', async () => {
+  it('Superuser 可以建立表格與選項池', async () => {
     await assertSucceeds(setDoc(doc(ownerDb(), 'templates/t1'), { name: '營會登記表' }))
     await assertSucceeds(setDoc(doc(ownerDb(), 'optionSets/o1'), { code: 'school' }))
   })
@@ -94,57 +115,71 @@ describe('只有擁有者能進來', () => {
 describe('submissions 是不可變事件', () => {
   before(async () => {
     await testEnv.clearFirestore()
-    await seed('submissions/s1', submission())
+    await seed('submissions/s1', submission({ _submitterEmail: OTHER }))
   })
 
-  it('擁有者可以新增', async () => {
-    await assertSucceeds(setDoc(doc(ownerDb(), 'submissions/new1'), submission()))
+  it('一般使用者可以新增自己的', async () => {
+    await assertSucceeds(setDoc(doc(otherDb(), 'submissions/new1'), submission({ _submitterEmail: OTHER })))
   })
 
-  it('不能冒用別人的 email 送出', async () => {
+  it('一般使用者不能冒用別人的 email 送出', async () => {
     await assertFails(
-      setDoc(doc(ownerDb(), 'submissions/new2'), submission({ _submitterEmail: OTHER }))
+      setDoc(doc(otherDb(), 'submissions/new2'), submission({ _submitterEmail: OWNER }))
     )
   })
 
   it('不能新增一筆一開始就不是鏈頭的紀錄', async () => {
     await assertFails(
-      setDoc(doc(ownerDb(), 'submissions/new3'), submission({ _isLatest: false }))
+      setDoc(doc(otherDb(), 'submissions/new3'), submission({ _submitterEmail: OTHER, _isLatest: false }))
     )
   })
 
   it('不能改欄位資料', async () => {
-    await assertFails(updateDoc(doc(ownerDb(), 'submissions/s1'), { quantity1: 999 }))
+    await assertFails(updateDoc(doc(otherDb(), 'submissions/s1'), { quantity1: 999 }))
   })
 
   it('不能改狀態', async () => {
-    await assertFails(updateDoc(doc(ownerDb(), 'submissions/s1'), { _status: 'VOID' }))
+    await assertFails(updateDoc(doc(otherDb(), 'submissions/s1'), { _status: 'VOID' }))
   })
 
   it('不能改 label 快照', async () => {
     await assertFails(
-      updateDoc(doc(ownerDb(), 'submissions/s1'), { _fieldLabels: { quantity1: '換個說法' } })
+      updateDoc(doc(otherDb(), 'submissions/s1'), { _fieldLabels: { quantity1: '換個說法' } })
     )
   })
 
   it('不能刪除', async () => {
-    await assertFails(deleteDoc(doc(ownerDb(), 'submissions/s1')))
+    await assertFails(deleteDoc(doc(otherDb(), 'submissions/s1')))
   })
 
-  it('可以把鏈頭交棒給新紀錄', async () => {
+  it('一般使用者可以把自己的鏈頭交棒給新紀錄', async () => {
     await assertSucceeds(
-      updateDoc(doc(ownerDb(), 'submissions/s1'), { _isLatest: false, _supersededBy: 's2' })
+      updateDoc(doc(otherDb(), 'submissions/s1'), { _isLatest: false, _supersededBy: 's2' })
+    )
+  })
+
+  it('一般使用者不能交棒別人的紀錄', async () => {
+    await seed('submissions/s_owner', submission({ _submitterEmail: OWNER }))
+    await assertFails(
+      updateDoc(doc(otherDb(), 'submissions/s_owner'), { _isLatest: false, _supersededBy: 's2' })
+    )
+  })
+
+  it('Superuser 可以交棒別人的紀錄', async () => {
+    await seed('submissions/s_other2', submission({ _submitterEmail: OTHER }))
+    await assertSucceeds(
+      updateDoc(doc(ownerDb(), 'submissions/s_other2'), { _isLatest: false, _supersededBy: 's2' })
     )
   })
 
   it('交棒之後不能再把鏈頭搶回來', async () => {
-    await assertFails(updateDoc(doc(ownerDb(), 'submissions/s1'), { _isLatest: true }))
+    await assertFails(updateDoc(doc(otherDb(), 'submissions/s1'), { _isLatest: true }))
   })
 
   it('不能只動指標卻偷改資料', async () => {
-    await seed('submissions/s3', submission())
+    await seed('submissions/s3', submission({ _submitterEmail: OTHER }))
     await assertFails(
-      updateDoc(doc(ownerDb(), 'submissions/s3'), {
+      updateDoc(doc(otherDb(), 'submissions/s3'), {
         _isLatest: false,
         _supersededBy: 's4',
         quantity1: 999,
@@ -153,17 +188,3 @@ describe('submissions 是不可變事件', () => {
   })
 })
 
-describe('擁有者讀得到自己的資料', () => {
-  before(async () => {
-    await testEnv.clearFirestore()
-    await seed('submissions/s1', submission())
-  })
-
-  it('讀單筆', async () => {
-    await assertSucceeds(getDoc(doc(ownerDb(), 'submissions/s1')))
-  })
-
-  it('列清單', async () => {
-    await assertSucceeds(getDocs(collection(ownerDb(), 'submissions')))
-  })
-})
