@@ -3,7 +3,7 @@
 import { ReactNode, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { ClipboardList, Database, LayoutGrid, ListTree, LogOut, Menu, Sparkles, X } from 'lucide-react'
+import { ClipboardList, Database, LayoutGrid, ListTree, LogOut, Menu, Sparkles, Users, X } from 'lucide-react'
 import { useAuth } from '@/components/auth'
 import { APP_NAME, APP_SUBTITLE, SUPERUSERS } from '@/lib/config'
 import { Spinner } from '@/components/ui'
@@ -13,6 +13,7 @@ const NAV = [
   { href: '/data', label: '資料池', icon: Database, desc: '查詢與匯出所有提交' },
   { href: '/forms', label: '表格', icon: LayoutGrid, desc: '建立與管理表格' },
   { href: '/options', label: '選項池', icon: ListTree, desc: '管理 KEY 與標準值' },
+  { href: '/users', label: '權限', icon: Users, desc: '設定各群組管理員' },
 ]
 
 export function AppShell({ children }: { children: ReactNode }) {

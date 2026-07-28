@@ -98,6 +98,23 @@ describe('Multi-User 存取控制', () => {
     await assertSucceeds(getDoc(doc(otherDb(), 'templates/t1')))
   })
 
+  it('Form Manager 可以讀取自己管理的表格的 submissions', async () => {
+    // 1. Seed user role for OTHER
+    await seed(`userRoles/${OTHER}`, { groups: ['SCD Manager'] })
+    
+    // 2. Seed template with manager group
+    await seed('templates/t_managed', { name: 'SCD Report', managerGroups: ['SCD Manager'] })
+    await seed('templates/t_unmanaged', { name: 'HR Report', managerGroups: ['HR Manager'] })
+    
+    // 3. Seed submissions for both templates
+    await seed('submissions/sub_managed', submission({ _submitterEmail: OWNER, _templateId: 't_managed' }))
+    await seed('submissions/sub_unmanaged', submission({ _submitterEmail: OWNER, _templateId: 't_unmanaged' }))
+    
+    // 4. Test access
+    await assertSucceeds(getDoc(doc(otherDb(), 'submissions/sub_managed'))) // Allowed via group
+    await assertFails(getDoc(doc(otherDb(), 'submissions/sub_unmanaged'))) // Denied
+  })
+
   it('一般使用者不能建表或改表', async () => {
     await assertFails(setDoc(doc(otherDb(), 'templates/t2'), { name: '偷建的' }))
   })

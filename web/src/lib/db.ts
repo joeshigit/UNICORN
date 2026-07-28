@@ -43,6 +43,7 @@ import type {
   Submission,
   SubmissionStatus,
   Template,
+  UserRole,
 } from '@/types'
 
 // ---------- 共用小工具 ----------
@@ -72,6 +73,23 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
 
 function newId(collectionName: string): string {
   return doc(collection(db, collectionName)).id
+}
+
+// ============================================
+// User Roles (權限管理)
+// ============================================
+
+export async function getUserRole(email: string): Promise<UserRole | null> {
+  const snap = await getDocFromServer(doc(db, 'userRoles', email.toLowerCase()))
+  return snap.exists() ? ({ email: snap.id, ...snap.data() } as UserRole) : null
+}
+
+export async function updateUserGroups(email: string, groups: string[], byEmail: string) {
+  await setDoc(doc(db, 'userRoles', email.toLowerCase()), {
+    groups,
+    updatedAt: serverTimestamp(),
+    updatedBy: byEmail
+  })
 }
 
 // ============================================
@@ -183,6 +201,7 @@ export async function ensureCoreOptionSets(userEmail: string): Promise<void> {
   const seeds: Array<{ code: string; name: string; items: string[] }> = [
     { code: MODULE_CODE, name: '表格分類', items: ['GENERAL'] },
     { code: ACTION_CODE, name: '表格動作', items: ['RECORD'] },
+    { code: MANAGER_GROUP_CODE, name: '管理員群組', items: ['SCD Manager', 'Admin Manager', 'Training Manager'] },
   ]
 
   for (const seed of seeds) {
@@ -219,6 +238,7 @@ export interface TemplateInput {
   actionId: string
   description?: string
   enabled: boolean
+  managerGroups?: string[]
   fields: FieldDefinition[]
 }
 
@@ -247,6 +267,7 @@ export async function createTemplate(input: TemplateInput, userEmail: string): P
       actionId: input.actionId,
       description: input.description?.trim() || '',
       enabled: input.enabled,
+      managerGroups: input.managerGroups || [],
       version: 1,
       fields: cleanFields(input.fields),
       createdBy: userEmail,
@@ -271,6 +292,7 @@ export async function updateTemplate(
     actionId: input.actionId,
     description: input.description?.trim() || '',
     enabled: input.enabled,
+    managerGroups: input.managerGroups || [],
     version: fieldsChanged ? currentVersion + 1 : currentVersion,
     fields: cleanFields(input.fields),
     updatedAt: serverTimestamp(),
@@ -474,46 +496,83 @@ export async function querySubmissions(
   const hasFieldFilter = !!(q.fieldKey && q.fieldValue)
 
   let rows: Submission[]
+  let managedTemplateIds: string[] = []
+
+  // 如果不是 Superuser，先檢查是不是 Manager，找出他能管的表格
+  if (!isSuperuser) {
+    const role = await getUserRole(userEmail)
+    const myGroups = role?.groups || []
+    if (myGroups.length > 0) {
+      // 這邊用 array-contains-any，所以最多只能有 10 個群組（Firestore 限制）
+      const tq = query(
+        collection(db, 'templates'),
+        where('managerGroups', 'array-contains-any', myGroups.slice(0, 10))
+      )
+      const templatesSnap = await getDocsFromServer(tq)
+      managedTemplateIds = templatesSnap.docs.map(d => d.id)
+    }
+  }
+
+  // 輔助函式：當需要限縮讀取範圍時，處理 Firestore OR 查詢的問題。
+  // 因為 Firestore 不能輕易混合 `where('_submitterEmail') OR where('_templateId', 'in')`
+  // 所以我們在前端分兩次抓回來再合併。
+  const fetchWithIsolation = async (baseConstraints: QueryConstraint[]) => {
+    if (isSuperuser) {
+      const snap = await getDocsFromServer(query(collection(db, 'submissions'), ...baseConstraints))
+      return snap.docs
+    }
+
+    // 1. 抓自己填的
+    const ownQ = query(
+      collection(db, 'submissions'),
+      where('_submitterEmail', '==', userEmail),
+      ...baseConstraints
+    )
+    const ownSnap = await getDocsFromServer(ownQ)
+    const docs = [...ownSnap.docs]
+
+    // 2. 抓自己管的表格的（如果不超過 10 張表，可以用 in，超過要分批，這裡簡化處理前 10 張）
+    if (managedTemplateIds.length > 0) {
+      const managedQ = query(
+        collection(db, 'submissions'),
+        where('_templateId', 'in', managedTemplateIds.slice(0, 10)),
+        ...baseConstraints
+      )
+      const managedSnap = await getDocsFromServer(managedQ)
+      docs.push(...managedSnap.docs)
+    }
+
+    // 3. 去重
+    const merged = new Map()
+    for (const d of docs) merged.set(d.id, d)
+    return Array.from(merged.values())
+  }
 
   if (hasFieldFilter) {
-    // 跨表查詢：只用單一欄位條件（自動索引），排序與其他條件在前端處理。
-    //
-    // 同時跑 == 和 array-contains：下拉欄位存的是陣列，但舊資料或非下拉欄位
-    // 存的是純值。Firestore 的 == 對陣列要求整個陣列一樣，array-contains 對
-    // 非陣列則永遠不成立，所以兩個都跑再合併才不會漏。
-    const baseConstraints: QueryConstraint[] = [fsLimit(max)]
-    if (!isSuperuser) baseConstraints.push(where('_submitterEmail', '==', userEmail))
-
-    const [exact, contains] = await Promise.all([
-      getDocsFromServer(
-        query(
-          collection(db, 'submissions'),
-          where(q.fieldKey!, '==', q.fieldValue!),
-          ...baseConstraints
-        )
-      ),
-      getDocsFromServer(
-        query(
-          collection(db, 'submissions'),
-          where(q.fieldKey!, 'array-contains', q.fieldValue!),
-          ...baseConstraints
-        )
-      ),
+    // 跨表查詢：同時跑 == 和 array-contains
+    const exactDocs = await fetchWithIsolation([
+      where(q.fieldKey!, '==', q.fieldValue!),
+      fsLimit(max),
     ])
+    const containsDocs = await fetchWithIsolation([
+      where(q.fieldKey!, 'array-contains', q.fieldValue!),
+      fsLimit(max),
+    ])
+
     const merged = new Map<string, Submission>()
-    for (const snap of [exact, contains]) {
-      for (const d of snap.docs) merged.set(d.id, { id: d.id, ...d.data() } as Submission)
+    for (const d of [...exactDocs, ...containsDocs]) {
+      merged.set(d.id, { id: d.id, ...d.data() } as Submission)
     }
     rows = Array.from(merged.values())
   } else {
     const constraints: QueryConstraint[] = []
-    if (!isSuperuser) constraints.push(where('_submitterEmail', '==', userEmail))
     if (!q.includeSuperseded) constraints.push(where('_isLatest', '==', true))
     if (q.templateId) constraints.push(where('_templateId', '==', q.templateId))
     if (q.month) constraints.push(where('_submittedMonth', '==', q.month))
     constraints.push(orderBy('_submittedAt', 'desc'), fsLimit(max))
-    const snap = await getDocsFromServer(query(collection(db, 'submissions'), ...constraints))
-    rows = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Submission[]
+
+    const docs = await fetchWithIsolation(constraints)
+    rows = docs.map(d => ({ id: d.id, ...d.data() } as Submission))
   }
 
   if (hasFieldFilter) {

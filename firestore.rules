@@ -32,6 +32,34 @@ service cloud.firestore {
              request.resource.data._submitterEmail.lower() == request.auth.token.email.lower();
     }
 
+    // ============================================
+    // RBAC: Form Managers Access Control
+    // ============================================
+
+    // 1. Define who can manage users
+    match /userRoles/{email} {
+      // Users can read their own roles; Superusers can read/write all
+      allow read: if isSuperuser() || request.auth.token.email.lower() == email;
+      allow write: if isSuperuser();
+    }
+
+    // 2. The core ACL logic
+    function getMyGroups() {
+      // Get the groups array from the userRoles document for the logged-in user
+      let roleDoc = get(/databases/$(database)/documents/userRoles/$(request.auth.token.email.lower()));
+      return roleDoc == null ? [] : roleDoc.data.groups;
+    }
+
+    function isManagerOfForm(templateId) {
+      // Get the managerGroups array from the specific Template document
+      let templateDoc = get(/databases/$(database)/documents/templates/$(templateId));
+      let requiredGroups = templateDoc == null ? [] : templateDoc.data.managerGroups;
+      
+      // If the template has no managerGroups, it's Superuser/Submitter only.
+      // Otherwise, check if the user's groups intersect with the template's required groups.
+      return requiredGroups != null && getMyGroups().hasAny(requiredGroups);
+    }
+
     // 選項池：Meaning Layer
     // 只有 Superuser 可以看跟改
     match /optionSets/{optionSetId} {
@@ -47,8 +75,11 @@ service cloud.firestore {
 
     // 單一資料池：Submission Layer（不可變事件）
     match /submissions/{submissionId} {
-      // 讀取：Superuser 看全部，一般人只看自己填的
-      allow read: if isSuperuser() || isOwnerOfRecord();
+      // 讀取：
+      // - Superuser 看全部
+      // - 一般人看自己填的
+      // - Manager 可以看自己管的表格的所有資料
+      allow read: if isSuperuser() || isOwnerOfRecord() || isManagerOfForm(resource.data._templateId);
 
       // 新增：任何登入者都可以新增，但 _submitterEmail 必須是自己
       allow create: if isCreatingOwnRecord()

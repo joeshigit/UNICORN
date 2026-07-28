@@ -7,7 +7,7 @@ import { ArrowDown, ArrowLeft, ArrowUp, Plus, Trash2 } from 'lucide-react'
 import { useAuth } from '@/components/auth'
 import { ErrorBanner, PageHeader, Spinner } from '@/components/ui'
 import { createTemplate, getTemplate, listOptionSets, updateTemplate } from '@/lib/db'
-import { ACTION_CODE, FIXED_KEYS, FIXED_KEY_GROUPS, MODULE_CODE } from '@/lib/keys'
+import { ACTION_CODE, FIXED_KEYS, FIXED_KEY_GROUPS, MANAGER_GROUP_CODE, MODULE_CODE } from '@/lib/keys'
 import type { FieldDefinition, OptionSet, Template } from '@/types'
 
 interface KeyChoice {
@@ -36,6 +36,7 @@ function FormBuilder() {
   const [actionId, setActionId] = useState('')
   const [description, setDescription] = useState('')
   const [enabled, setEnabled] = useState(true)
+  const [managerGroups, setManagerGroups] = useState<string[]>([])
   const [fields, setFields] = useState<FieldDefinition[]>([])
 
   useEffect(() => {
@@ -53,6 +54,7 @@ function FormBuilder() {
           setActionId(template.actionId)
           setDescription(template.description || '')
           setEnabled(template.enabled)
+          setManagerGroups(template.managerGroups || [])
           setFields(template.fields.map((f, i) => ({ ...f, order: i })))
         }
       } catch (err) {
@@ -73,12 +75,16 @@ function FormBuilder() {
     () => masterSets.find(os => os.code === ACTION_CODE)?.items || [],
     [masterSets]
   )
+  const managerGroupItems = useMemo(
+    () => masterSets.find(os => os.code === MANAGER_GROUP_CODE)?.items || [],
+    [masterSets]
+  )
 
-  // dropdown 的 KEY 就是選項池的 code，module/action 保留給表格本身用
+  // dropdown 的 KEY 就是選項池的 code，module/action 等系統保留字不給當一般欄位
   const optionSetKeys: KeyChoice[] = useMemo(() => {
     const seen = new Set<string>()
     return masterSets
-      .filter(os => os.code !== MODULE_CODE && os.code !== ACTION_CODE)
+      .filter(os => os.code !== MODULE_CODE && os.code !== ACTION_CODE && os.code !== MANAGER_GROUP_CODE)
       .filter(os => (seen.has(os.code) ? false : (seen.add(os.code), true)))
       .map(os => ({ key: os.code, type: 'dropdown' as const, label: os.name }))
   }, [masterSets])
@@ -145,7 +151,7 @@ function FormBuilder() {
     setSaving(true)
     setError('')
     try {
-      const input = { name, moduleId, actionId, description, enabled, fields }
+      const input = { name, moduleId, actionId, description, enabled, managerGroups, fields }
       if (editId && source) {
         const fieldsChanged = JSON.stringify(source.fields) !== JSON.stringify(fields)
         await updateTemplate(editId, input, source.version, fieldsChanged)
@@ -249,6 +255,43 @@ function FormBuilder() {
             />
             啟用（出現在填報中心）
           </label>
+        </section>
+
+        <section className="card space-y-4 p-6">
+          <h2 className="font-semibold">權限設定</h2>
+          <div>
+            <label className="label mb-2">
+              哪些管理群組可以看這張表的資料？
+              <span className="block text-xs font-normal text-slate-500 mt-1">
+                沒有勾選時，只有 Superuser 和填表人自己看得到。
+              </span>
+            </label>
+            {managerGroupItems.length === 0 ? (
+              <div className="text-sm text-amber-700 bg-amber-50 rounded-lg p-3 border border-amber-200">
+                尚未建立 <code className="font-mono">{MANAGER_GROUP_CODE}</code> 選項池，無法設定群組管理員。
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-4">
+                {managerGroupItems.map(item => (
+                  <label key={item.value} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-slate-50 px-2 py-1 rounded">
+                    <input
+                      type="checkbox"
+                      className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                      checked={managerGroups.includes(item.value)}
+                      onChange={e =>
+                        setManagerGroups(prev =>
+                          e.target.checked
+                            ? [...prev, item.value]
+                            : prev.filter(v => v !== item.value)
+                        )
+                      }
+                    />
+                    {item.label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         </section>
 
         <section className="card space-y-3 p-6">

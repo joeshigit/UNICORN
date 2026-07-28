@@ -77,7 +77,8 @@ export function isFixedKey(key: string): boolean {
 // 表格分類 / 動作也是選項池，用這兩個保留 code 管理
 export const MODULE_CODE = 'module'
 export const ACTION_CODE = 'action'
-export const RESERVED_CODES = [MODULE_CODE, ACTION_CODE]
+export const MANAGER_GROUP_CODE = 'managerGroup'
+export const RESERVED_CODES = [MODULE_CODE, ACTION_CODE, MANAGER_GROUP_CODE]
 
 // 選項池的 code 就是 dropdown 欄位的 KEY，必須是安全的識別字
 export function validateOptionSetCode(code: string): string | null {

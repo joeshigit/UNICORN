@@ -45,6 +45,15 @@ export interface Template {
   createdAt: unknown
   updatedAt: unknown
   _createdMonth: string
+  managerGroups?: string[]
+}
+
+// ---------- UserRole (權限管理) ----------
+export interface UserRole {
+  email: string
+  groups: string[]
+  updatedAt: unknown
+  updatedBy: string
 }
 
 // ---------- OptionSet（選項池 / Meaning Layer）----------
