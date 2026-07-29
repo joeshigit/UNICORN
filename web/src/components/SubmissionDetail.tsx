@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Ban, Paperclip, Pencil, X } from 'lucide-react'
 import { StatusChip } from '@/components/ui'
 import { voidSubmission, toDate } from '@/lib/db'
 import type { Actor } from '@/lib/db'
-import { createAuthorizedObjectUrl, formatFileSize } from '@/lib/storage'
+import { formatFileSize, openStoredFile } from '@/lib/storage'
 import type { FileInfo, Submission } from '@/types'
 
 interface SubmissionDetailProps {
@@ -28,23 +28,25 @@ function renderValue(submission: Submission, key: string): string {
 
 function AuthFileLink({ file }: { file: FileInfo }) {
   const [busy, setBusy] = useState(false)
-  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+  const openedRef = useRef<{ url: string; revoke: () => void } | null>(null)
 
   useEffect(() => {
     return () => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
+      openedRef.current?.revoke()
+      openedRef.current = null
     }
-  }, [objectUrl])
+  }, [])
 
   const open = async () => {
+    if (openedRef.current) {
+      window.open(openedRef.current.url, '_blank', 'noopener,noreferrer')
+      return
+    }
     setBusy(true)
     try {
-      const url = await createAuthorizedObjectUrl(file.path)
-      setObjectUrl(prev => {
-        if (prev) URL.revokeObjectURL(prev)
-        return url
-      })
-      window.open(url, '_blank', 'noopener,noreferrer')
+      const opened = await openStoredFile(file.path)
+      openedRef.current = opened
+      window.open(opened.url, '_blank', 'noopener,noreferrer')
     } catch {
       alert('無法開啟檔案（可能沒有權限）')
     } finally {

@@ -2,12 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Paperclip, Upload, X } from 'lucide-react'
-import {
-  createAuthorizedObjectUrl,
-  formatFileSize,
-  removeFile,
-  uploadFile,
-} from '@/lib/storage'
+import { formatFileSize, openStoredFile, removeFile, uploadFile } from '@/lib/storage'
 import { CaptureButtons } from './CaptureButtons'
 import type { Actor } from '@/lib/db'
 import type { FileInfo } from '@/types'
@@ -23,25 +18,26 @@ interface FileUploaderProps {
 }
 
 function FileLink({ file }: { file: FileInfo }) {
-  const [href, setHref] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const openedRef = useRef<{ url: string; revoke: () => void } | null>(null)
 
   useEffect(() => {
     return () => {
-      if (href) URL.revokeObjectURL(href)
+      openedRef.current?.revoke()
+      openedRef.current = null
     }
-  }, [href])
+  }, [])
 
   const open = async () => {
-    if (href) {
-      window.open(href, '_blank', 'noopener,noreferrer')
+    if (openedRef.current) {
+      window.open(openedRef.current.url, '_blank', 'noopener,noreferrer')
       return
     }
     setBusy(true)
     try {
-      const url = await createAuthorizedObjectUrl(file.path)
-      setHref(url)
-      window.open(url, '_blank', 'noopener,noreferrer')
+      const opened = await openStoredFile(file.path)
+      openedRef.current = opened
+      window.open(opened.url, '_blank', 'noopener,noreferrer')
     } catch {
       alert('無法開啟檔案（可能沒有權限）')
     } finally {
