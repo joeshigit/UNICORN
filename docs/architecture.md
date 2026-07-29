@@ -178,6 +178,29 @@ orderBy('_submittedAt', 'desc')
 - 完整匯出走 `exportAllSubmissions`，cursor 分頁、不套用顯示上限，上限是 `EXPORT_HARD_CAP`（20,000）
 - module／action 映射 `_templateModule`／`_templateAction`，不當作一般 KEY 篩選
 
+### 索引為什麼剛好是 9 個
+
+查詢只有一種形狀：等值條件 ＋ `_submittedMonth` 範圍 ＋ `orderBy(_submittedMonth, _submittedAt)`。
+
+等值條件有三個可選欄位（`_submitterUid` / `_isLatest` / `_templateId`），共 8 種組合。**每一種組合都需要自己的索引**——索引欄位有順序，範圍欄位必須排在所有等值欄位之後，所以較長的索引無法服務較短的查詢。
+
+| 等值條件 | 什麼時候用到 |
+|---------|-------------|
+| 無 | Superuser ＋ 看舊版本 ＋ 不指定表格 |
+| `_isLatest` | Superuser 的預設查詢 |
+| `_templateId` | Superuser ＋ 看舊版本 ＋ 指定表格 |
+| `_isLatest` `_templateId` | Superuser 指定表格；Manager 的 `in` 查詢 |
+| `_submitterUid` | 一般使用者 ＋ 看舊版本 |
+| `_submitterUid` `_isLatest` | 一般使用者的預設查詢 |
+| `_submitterUid` `_templateId` | 一般使用者 ＋ 看舊版本 ＋ 指定表格 |
+| `_submitterUid` `_isLatest` `_templateId` | 一般使用者指定表格 |
+
+加上 `uploadSessions` 的孤兒清理索引，總共 9 個。
+
+`module` / `action` / `status` / 跨表 KEY 都是前端精修，**不需要索引**。跨表 KEY 也不需要複合索引，所以新增選項池不必改索引檔、不必重新部署。
+
+每次寫入都會更新所有相符的索引，所以多餘的索引是實際的寫入成本，不要「留著以防萬一」。
+
 ### 跨表格搜尋
 
 不指定表格時本來就是跨表格查詢——`submissions` 是統一的池子。以某個 Universal KEY 找特定值仍然可用，但它是**月份範圍內的前端精修**。以 KEY 為主軸、不先給時間範圍的專用搜尋模式是另一個需求，留待實際使用習慣明朗後再設計。
