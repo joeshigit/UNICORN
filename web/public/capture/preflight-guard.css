@@ -1,0 +1,31 @@
+/* ============================================
+   擷取 UI 的 Tailwind Preflight 防護
+   ============================================
+   DocumentScanner 與 BillPaste 的 CSS 原樣搬自 GAS 版，未宣告的屬性原本吃瀏覽器
+   預設值。UNICORN 的 @tailwind base 會把 button/input 的 font-family、line-height、
+   letter-spacing 改成 inherit，並把 input 的 margin 歸零 —— 按鈕會變高、radio 會貼太緊。
+
+   :where() 的特異性為 0，因此下列規則只有 `button` / `input` 這類型選擇器的
+   (0,0,1)，與 Preflight 同分而靠載入順序勝出；模組本身任何帶 class 或 id 的宣告
+   （.doc-scanner-btn、.doc-scanner-close、#bill-paste-overlay button …）一律優先。
+   ============================================ */
+
+:where(.doc-scanner-overlay, #bill-paste-overlay) button {
+  font-family: revert;
+  line-height: revert;
+  letter-spacing: revert;
+}
+
+:where(.doc-scanner-overlay, #bill-paste-overlay) input,
+:where(.doc-scanner-overlay, #bill-paste-overlay) textarea,
+:where(.doc-scanner-overlay, #bill-paste-overlay) select {
+  margin: revert;
+  letter-spacing: revert;
+}
+
+/* DocumentScanner 的 CSS 完全沒有宣告 font-family，在 GAS 裡繼承 staffWebApp 的
+   body 字體。這裡比照 BillPaste 的宣告，避免繼承到 UNICORN 的 Noto Sans TC。
+   確認 staffWebApp 實際字體後，改這一條即可。 */
+.doc-scanner-overlay {
+  font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+}

@@ -8,6 +8,7 @@ import {
   removeFile,
   uploadFile,
 } from '@/lib/storage'
+import { CaptureButtons } from './CaptureButtons'
 import type { Actor } from '@/lib/db'
 import type { FileInfo } from '@/types'
 
@@ -138,6 +139,17 @@ export function FileUploader({
           <Upload className="h-4 w-4" />
           {uploading ? '上傳中…' : '選擇檔案上傳'}
         </button>
+      )}
+
+      {value.length < maxFiles && (
+        <CaptureButtons
+          fieldKey={fieldKey}
+          submissionId={submissionId}
+          actor={actor}
+          onUploaded={file => onChange([...value, file])}
+          onError={setUploadError}
+          disabled={uploading}
+        />
       )}
 
       <input ref={inputRef} type="file" multiple hidden onChange={handleSelect} />
