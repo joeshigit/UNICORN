@@ -82,7 +82,43 @@ Rules 在 `templates` 讀取與 `submissions` CREATE 時雙重檢查。缺少 `u
 
 ---
 
-## 4. 寫入當下的決定
+## 4. 空白是一個答案
+
+**同一張表的每一筆資料形狀完全相同。** 每個被問到的問題，每一筆都有對應的欄位；空白是一個值，不是欄位消失。
+
+| 型別 | 有值 | 空白 | 怎麼查空白 |
+|------|------|------|-----------|
+| 文字／多行／數字／日期／時間 | 值 | `null` | `where(key, '==', null)` |
+| 下拉 | `['粵華中學']` / `'粵華中學'` / `1` | `[]` / `''` / `0` | `where(keyCount, '==', 0)` |
+| 檔案 | 檔案數量 | `0` | `where(key, '==', 0)` |
+
+### 為什麼不能讓 KEY 消失
+
+在 Firestore 裡「欄位不存在」不是一個值，是**索引上的一個洞**：
+
+- 對那個欄位的任何條件都撈不到它，連 `!=` 也不行
+- `orderBy` 那個欄位時，**整筆紀錄會被排除**——不是排到最後，是消失
+- 沒辦法查「誰沒填」
+
+`null` 是真正的值，所以三個問題都消失：`== null` 查得到、`orderBy` 會納入（排最前）、數字的範圍查詢仍然正確排除它。這就是標準的可空欄位語意，跟 SQL 的 NULL 一樣。
+
+數字欄位不能用 `''` 或 `0` 當空白：`''` 會讓同一個 KEY 出現字串與數字兩種型別，範圍查詢就壞了；`0` 會跟使用者真的填 0 混在一起。`null` 兩個問題都沒有。
+
+### 連帶的好處
+
+不需要另外存一份「哪些欄位是空白」的清單。填答率直接查得到：
+
+```js
+// 這個月有幾份個案報告漏填了備註
+where('_submittedMonth', '==', '2026-07')
+where('note', '==', null)
+```
+
+`_fieldLabels` / `_fieldKeys` / `_optionLabels` 也一律涵蓋所有欄位，鍵集合在同一張表內不會因為有沒有填而不同。
+
+---
+
+## 5. 寫入當下的決定
 
 | 值 | 何時 | 誰 | 鎖定 |
 |----|------|----|------|
@@ -95,7 +131,7 @@ Rules 在 `templates` 讀取與 `submissions` CREATE 時雙重檢查。缺少 `u
 
 ---
 
-## 5. 檔案生命週期
+## 6. 檔案生命週期
 
 1. 開啟填報 → `ensureUploadSession(submissionId)`
 2. 上傳 → `uploads/{uid}/{submissionId}/{fieldKey}/{fileId}`（需有效 session、≤20MB、核准 MIME）
@@ -107,7 +143,7 @@ Rules 在 `templates` 讀取與 `submissions` CREATE 時雙重檢查。缺少 `u
 
 ---
 
-## 6. 查詢完整性：先計數，再決定要不要查
+## 7. 查詢完整性：先計數，再決定要不要查
 
 資料池的查詢順序是強制的，跟銀行 App 一樣：
 
@@ -148,7 +184,7 @@ orderBy('_submittedAt', 'desc')
 
 ---
 
-## 7. 欄位輸入模式
+## 8. 欄位輸入模式
 
 `required` 與 `inputMode` 是**兩個正交的維度**：
 
@@ -193,7 +229,7 @@ department: ['SCD'], departmentCombined: 'SCD', departmentCount: 1
 
 ---
 
-## 8. 語意日期／時間
+## 9. 語意日期／時間
 
 - Date：`YYYY-MM-DD` 字串 KEY（見上）
 - Time：`HH:mm` 澳門牆鐘；**不**自動令 `endTime = startTime`
@@ -203,7 +239,7 @@ department: ['SCD'], departmentCombined: 'SCD', departmentCount: 1
 
 ---
 
-## 9. 刻意不做的事
+## 10. 刻意不做的事
 
 | 不做 | 理由 |
 |------|------|

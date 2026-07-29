@@ -481,6 +481,18 @@ function canonicalOrder(picked: string[], order?: string[]): string[] {
   )
 }
 
+/**
+ * 同一張表的每一筆資料形狀必須完全相同。
+ *
+ * 空白是一個答案，不是欄位消失——每個被問到的問題，每一筆都要有對應的欄位：
+ *
+ *   文字／多行／數字／日期／時間   有值 → 值      空白 → null      查空白：== null
+ *   下拉                          ['A']/'A'/1    []/''/0          查空白：<key>Count == 0
+ *   檔案                          數量           0                查空白：== 0
+ *
+ * 為什麼不能讓 KEY 消失：缺少的欄位在 Firestore 不是一個值，是索引上的一個洞。
+ * 任何條件都撈不到它（連 != 也不行），orderBy 那個欄位時整筆紀錄會直接消失。
+ */
 function buildSubmissionDoc(
   input: SubmitInput,
   owner: Actor,
@@ -532,10 +544,20 @@ function buildSubmissionDoc(
       continue
     }
 
+    // 空白一律寫 null，不要讓 KEY 消失。
+    //
+    // 缺少的欄位在 Firestore 不是一個值，是索引上的一個洞：任何條件都撈不到它，
+    // orderBy 那個欄位時整筆紀錄會直接消失。null 是真正的值，可以用 == null 查、
+    // orderBy 會納入（排最前）、數字的範圍查詢也會正確排除它——就是標準的可空欄位語意。
+    //
+    // 這樣同一張表的每一筆資料形狀完全相同，不需要記「哪些型別空白會少一個欄位」。
     const value = values[field.key]
-    if (value === undefined || value === '' || value === null) continue
-    if (Array.isArray(value) && value.length === 0) continue
-    payload[field.key] = value
+    const blank =
+      value === undefined ||
+      value === null ||
+      value === '' ||
+      (Array.isArray(value) && value.length === 0)
+    payload[field.key] = blank ? null : value
   }
 
   return stripUndefined(payload)

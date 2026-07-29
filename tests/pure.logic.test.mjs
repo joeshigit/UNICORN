@@ -96,6 +96,45 @@ function resolveInitialValue(field, previous, emptyValue) {
   return field.presetValue
 }
 
+// ---------- 送出時的欄位形狀（對應 db.ts 的 buildSubmissionDoc）----------
+
+function canonicalOrder(picked, order) {
+  const unique = Array.from(new Set(picked))
+  if (!order || order.length === 0) return unique.sort()
+  const rank = new Map(order.map((v, i) => [v, i]))
+  return unique.sort(
+    (a, b) => (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER)
+  )
+}
+
+function asArray(value) {
+  if (Array.isArray(value)) return value.filter(v => v !== '' && v != null).map(String)
+  if (value === '' || value == null) return []
+  return [String(value)]
+}
+
+/** 只做使用者欄位的部分，不含 _ 前綴的 metadata */
+function buildFieldPayload(fields, values, optionOrder = {}) {
+  const payload = {}
+  for (const field of fields) {
+    if (field.type === 'dropdown') {
+      const picked = canonicalOrder(asArray(values[field.key]), optionOrder[field.key])
+      payload[field.key] = picked
+      payload[`${field.key}Combined`] = picked.join(', ')
+      payload[`${field.key}Count`] = picked.length
+      continue
+    }
+    const value = values[field.key]
+    const blank =
+      value === undefined ||
+      value === null ||
+      value === '' ||
+      (Array.isArray(value) && value.length === 0)
+    payload[field.key] = blank ? null : value
+  }
+  return payload
+}
+
 function eventTypeOf(moduleId, actionId) {
   return `${moduleId}.${actionId}`
 }
@@ -267,6 +306,86 @@ describe('月份範圍與計數閘門', () => {
     assert.equal(unique, 500)
     // 上界超過 500 就擋下，即使去重後剛好 500。保守但安全。
     assert.ok(sum > 500 && unique <= 500)
+  })
+})
+
+describe('資料形狀：同一張表的每一筆都相同', () => {
+  const fields = [
+    { key: 'school', type: 'dropdown', label: '學校', required: false },
+    { key: 'title', type: 'text', label: '標題', required: false },
+    { key: 'note', type: 'textarea', label: '備註', required: false },
+    { key: 'quantity1', type: 'number', label: '人數', required: false },
+    { key: 'eventDate', type: 'date', label: '日期', required: false },
+    { key: 'upload', type: 'file', label: '附件', required: false },
+  ]
+  const order = { school: ['粵華中學', '培正中學'] }
+
+  const full = buildFieldPayload(
+    fields,
+    {
+      school: ['粵華中學'],
+      title: '個案 A',
+      note: '有備註',
+      quantity1: 3,
+      eventDate: '2026-01-15',
+      upload: 2,
+    },
+    order
+  )
+  const empty = buildFieldPayload(
+    fields,
+    { school: [], title: '', note: '', quantity1: '', eventDate: '', upload: 0 },
+    order
+  )
+
+  it('全部填與全部空白的欄位集合完全一致', () => {
+    assert.deepEqual(Object.keys(full).sort(), Object.keys(empty).sort())
+  })
+
+  it('空白的純量欄位存成 null，KEY 不會消失', () => {
+    assert.equal(empty.title, null)
+    assert.equal(empty.note, null)
+    assert.equal(empty.quantity1, null)
+    assert.equal(empty.eventDate, null)
+    assert.ok('title' in empty && 'quantity1' in empty)
+  })
+
+  it('下拉維持三個形狀，空白時是 [] / "" / 0', () => {
+    assert.deepEqual(empty.school, [])
+    assert.equal(empty.schoolCombined, '')
+    assert.equal(empty.schoolCount, 0)
+  })
+
+  it('檔案欄位空白時是數量 0，不是 null', () => {
+    assert.equal(empty.upload, 0)
+  })
+
+  it('真正填 0 的數字不會被當成空白', () => {
+    const zero = buildFieldPayload(fields, { quantity1: 0 }, order)
+    assert.equal(zero.quantity1, 0)
+    assert.notEqual(zero.quantity1, null)
+  })
+
+  // null 是值而不是索引上的洞，所以排序不會把它整筆丟掉
+  it('依欄位排序時空白紀錄仍在結果內（排最前）', () => {
+    const rows = [{ quantity1: 5 }, { quantity1: null }, { quantity1: 2 }]
+    const sorted = [...rows].sort((a, b) => {
+      if (a.quantity1 === null && b.quantity1 === null) return 0
+      if (a.quantity1 === null) return -1
+      if (b.quantity1 === null) return 1
+      return a.quantity1 - b.quantity1
+    })
+    assert.equal(sorted.length, 3, '沒有紀錄消失')
+    assert.equal(sorted[0].quantity1, null, 'null 排最前')
+  })
+
+  it('空白可以查得到（== null），不必另外存一個清單', () => {
+    const rows = [
+      { id: 1, note: '有寫' },
+      { id: 2, note: null },
+      { id: 3, note: null },
+    ]
+    assert.equal(rows.filter(r => r.note === null).length, 2)
   })
 })
 

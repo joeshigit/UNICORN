@@ -92,10 +92,16 @@ function SubmitForm() {
         const emptyValue: unknown = multiValue ? [] : ''
 
         if (previous !== undefined) {
+          // 空白現在存成 null，所以下拉欄位要把 null 正規化成空值，
+          // 否則複選會變成 [null]
           if (field.type === 'dropdown' && !field.multiple) {
-            initial[field.key] = Array.isArray(previous) ? (previous[0] ?? '') : previous
+            initial[field.key] = Array.isArray(previous) ? (previous[0] ?? '') : (previous ?? '')
           } else if (field.type === 'dropdown' && field.multiple) {
-            initial[field.key] = Array.isArray(previous) ? previous : [previous]
+            initial[field.key] = Array.isArray(previous)
+              ? previous
+              : previous == null
+                ? []
+                : [previous]
           } else {
             initial[field.key] = previous
           }
@@ -188,13 +194,12 @@ function SubmitForm() {
           const items = optionsBySet[field.optionSetId] || []
           optionOrder[field.key] = items.map(i => i.value)
 
+          // 空白也要寫（空字串），讓同一張表的每一筆 _optionLabels 鍵集合一致
           const picked = Array.isArray(value) ? (value as string[]) : value ? [value as string] : []
-          if (picked.length > 0) {
-            optionLabels[field.key] = items
-              .filter(i => picked.includes(i.value))
-              .map(i => i.label)
-              .join('、')
-          }
+          optionLabels[field.key] = items
+            .filter(i => picked.includes(i.value))
+            .map(i => i.label)
+            .join('、')
         }
       }
 
