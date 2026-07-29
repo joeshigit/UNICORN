@@ -1,217 +1,137 @@
-# 架構說明（單人版）
+# 架構說明（多使用者 Stabilization）
 
-這份文件說明 Unicorn Capture 單人版的資料設計，以及每個設計決定背後的理由。
 操作步驟看 [README](../README.md)，建表流程看 [建表手冊](form-manual.md)。
 
 ---
 
 ## 1. 四層架構
 
-Unicorn 的規矩是每個 collection 都要能明確歸到某一層，歸不進去就是設計錯了。
-
 | 層 | Collection | 性質 |
 |----|-----------|------|
-| **Meaning** | `optionSets` | 字典。定義有哪些 KEY，以及每個 KEY 的合法值 |
-| **Template** | `templates` | 表格定義。是資料，不是程式碼 |
-| **Submission** | `submissions` | 不可變事件。唯一的資料池 |
-| **Derived View** | submission 內 `_` 開頭的欄位 | 寫入當下算好、直接存進事件本身 |
-
-沒有第四個 collection，也沒有任何子集合被拿來當關聯表用。
+| **Meaning** | `optionSets` | 字典。KEY 與合法 VALUE |
+| **Template** | `templates` | 表格定義（含填報／管理 ACL） |
+| **Submission** | `submissions` | 不可變事件，單一資料池 |
+| **Staging** | `uploadSessions` | 送出前檔案暫存擁有權（非業務真相） |
+| **Derived View** | submission 內 `_` 欄位 | 寫入當下算好並凍結 |
 
 ---
 
-## 2. Collection 結構
+## 2. 身分與授權
 
-### optionSets
+### 組織邊界
 
-```js
-{
-  code: 'school',            // 這個清單定義的 Universal KEY
-  name: '所有學校',
-  isMaster: true,            // false = 子集
-  masterSetId: undefined,    // 子集才有，指向 Master
-  items: [
-    { value: '粵華中學', label: '粵華中學', status: 'active', sort: 0 },
-    { value: '培正中學', label: '培正',     status: 'active', sort: 1 },
-  ],
-}
+Rules 要求：
+
+```
+request.auth != null
+&& request.auth.token.email_verified == true
+&& request.auth.token.email.matches('.*@dbyv\\.org$')
 ```
 
-- `value` 是存進資料池的標準碼，建立後不改
-- `label` 只是顯示用，隨時可以改，改了也不影響歷史資料（送出時已經快照過）
-- 子集的每個 `value` 都必須存在於 Master，由 `createSubset()` 在寫入前驗證
+前端另以 Google `hd: dbyv.org` 與登入後檢查作為便利層，**不能替代 rules**。
 
-`module` 和 `action` 是兩個保留 code，用來當表格本身的分類與動作。
+### 角色
 
-### templates
+- **Superuser**：rules 硬編碼 email 清單（與 `NEXT_PUBLIC_OWNER_EMAIL` 對齊）
+- **Manager**：`userRoles/{email}.groups` ∩ `templates/{id}.managerGroups`
+- **Submitter**：可填 `fillAccessType` 允許的表；擁有自己的 submission
+
+Manager **可讀不可改他人鏈**。更正／作廢僅擁有者或 Superuser。
+
+### 模板填報 ACL
 
 ```js
-{
-  name: '營會登記表',
-  moduleId: 'CAMP',
-  actionId: 'REGISTER',
-  description: '記錄每次入營的學校與人數',
-  enabled: true,
-  version: 3,
-  fields: [
-    { key: 'school', type: 'dropdown', label: '入營學校', required: true, order: 0, optionSetId: '...' },
-    { key: 'quantity1', type: 'number', label: '學生人數', required: true, order: 1 },
-  ],
-}
+fillAccessType: 'allOrgUsers' | 'groups'
+fillGroups: string[]          // 當 type=groups
+managerGroups: string[]       // 只控制讀取管理，不控制填報
 ```
 
-改欄位會讓 `version` +1。已提交的資料帶著送出當下的 version 與 label 快照，不受影響。
+Rules 在 `templates` 讀取與 `submissions` CREATE 時雙重檢查。缺少 `userRoles` 或空 `managerGroups` 時以 `exists()` / list 檢查安全失敗（deny）。
 
-### submissions
+---
+
+## 3. Submission 文件
 
 ```js
 {
-  // 系統 metadata（寫入當下凍結）
-  _templateId, _templateName, _templateModule, _templateAction, _templateVersion,
-  _submitterEmail, _submittedAt, _submittedMonth,
+  _templateId, _templateName, _templateModule, _templateAction,
+  _eventType: 'CAMP.REGISTER',   // 寫入當下：module.action
+  _templateVersion,
+
+  _submitterUid, _submitterEmail,   // 穩定擁有者
+  _actorUid, _actorEmail,           // 此版本操作者
+  _eventKind: 'CREATE' | 'CORRECTION' | 'VOID',
+
+  _submittedAt,                     // Firestore Timestamp
+  _submittedMonth: '2026-07',       // Asia/Macau
   _status: 'ACTIVE' | 'VOID',
-
-  // 更正鏈
   _isLatest: true,
-  _supersedes: '被這筆更正的紀錄 ID',
-  _supersededBy: '取代這筆的紀錄 ID',
+  _supersedes, _supersededBy,
 
-  // 顯示快照
-  _fieldLabels: { school: '入營學校', quantity1: '學生人數' },
-  _optionLabels: { school: '粵華中學' },
-  _fieldKeys: ['school', 'quantity1'],
+  _fieldLabels, _optionLabels, _fieldKeys,
+  files: [{ fieldKey, path, name, mimeType, size, uploadedAt, uploadedBy }],
 
-  // 使用者資料：Universal KEY 平鋪在頂層
-  school: '粵華中學',
-  quantity1: 30,
-
-  files: [{ fieldKey, path, name, mimeType, size, url, uploadedAt, uploadedBy }],
+  // Universal KEY 平鋪
+  school: ['粵華中學'],
+  schoolCombined: '粵華中學',
+  schoolCount: 1,
+  eventDate: '2026-07-29',
+  eventTime: '09:30',
 }
 ```
 
-沒有 `values: {}` 這種巢狀結構。KEY 直接是文件欄位，查詢才不用展開。
+---
+
+## 4. 寫入當下的決定
+
+| 值 | 何時 | 誰 | 鎖定 |
+|----|------|----|------|
+| `_fieldLabels` / `_optionLabels` | 送出 | 前端 | 寫入即鎖 |
+| `_submittedMonth` | 送出 | `currentMonth()` @ Asia/Macau | 寫入即鎖 |
+| `_eventType` | 送出 | `module.action` | 寫入即鎖 |
+| `<key>` / Combined / Count | 送出 | `buildSubmissionDoc` | 寫入即鎖 |
+| `_isLatest` 交棒 | 更正／作廢交易 | 前端 transaction + rules | 單向不可逆 |
+| 擁有者欄位 | 鏈上第一筆 CREATE | 之後更正不可偽造 | rules 驗證 parent |
 
 ---
 
-## 3. 寫入當下的決定
+## 5. 檔案生命週期
 
-每個衍生值都要交代：什麼時候算、誰算、存在哪、什麼時候鎖住。
+1. 開啟填報 → `ensureUploadSession(submissionId)`
+2. 上傳 → `uploads/{uid}/{submissionId}/{fieldKey}/{fileId}`（需有效 session、≤20MB、核准 MIME）
+3. 送出 → 寫入 submission（只存 path）→ 刪 session
+4. 定稿後 → Storage **禁止 delete**；讀取限擁有者／Manager／Superuser
+5. 孤兒清理 → 排程後端依過期 session 刪未定稿檔（**不放寬 rules**）
 
-| 值 | 什麼時候算 | 誰算 | 存在哪 | 什麼時候鎖住 |
-|----|-----------|------|--------|-------------|
-| `_templateName` / `_templateVersion` | 按下送出 | 前端 `buildSubmissionDoc()` | submission | 寫入即鎖 |
-| `_fieldLabels` | 按下送出 | 同上，從 template 抄 | submission | 寫入即鎖 |
-| `_optionLabels` | 按下送出 | 同上，從當時載入的選項池抄 | submission | 寫入即鎖 |
-| `_submittedMonth` | 按下送出 | `currentMonth()` | submission | 寫入即鎖 |
-| `_fieldKeys` | 按下送出 | 從 template 欄位清單抄 | submission | 寫入即鎖 |
-| `_isLatest` | 送出 / 更正 / 作廢 | 交易內同時寫兩份文件 | submission | 交棒後不可逆 |
-| `<key>` / `<key>Combined` / `<key>Count` | 按下送出 | `buildSubmissionDoc()` | submission | 寫入即鎖 |
-
-由前端算而不是 Cloud Function，是因為這套系統只有一位使用者，而且 Firestore 規則
-已經把「能寫什麼」限制死了。少一層後端，就少一個要部署與維護的東西。
-
-### 下拉欄位的三個形狀
-
-Firestore 沒辦法用同一個運算子同時處理「等於」和「包含」：`==` 對陣列要求整個陣列
-一模一樣，`array-contains` 對非陣列則永遠不成立。所以每個下拉欄位在寫入當下存三份：
-
-```js
-department:         ["教學部", "行政部"]   // array-contains：誰有份
-departmentCombined: "教學部, 行政部"       // ==：剛好是哪個組合（也是分組的鍵）
-departmentCount:    2                      // 跨了幾個
-```
-
-三條必須守的紀律：
-
-1. **只能在 `buildSubmissionDoc()` 裡產生。** 任何繞過它的寫入路徑（匯入腳本之類）
-   都會產出查不到的資料，而且不會報錯——跟舊資料缺 `_isLatest` 是同一類的靜默失敗。
-2. **組合字串照選項池排序**，不是使用者的點選順序，否則同一種組合會分裂成多個鍵。
-3. **單選複選一律都寫三份。** 這是重點：同一個 KEY 若在不同文件裡型別不同，
-   之後每個碰這份資料的人和工具都得記得處理兩種情況，漏一次就少一半資料。
-
-這是針對 Firestore 限制的對策，不是通則。加新的衍生欄位之前先問：這是平台逼的，
-還是只是還沒想清楚要問什麼問題。搬到 PostgreSQL 的話這三個裡有兩個可以直接丟掉，
-`GROUP BY` 就解決了。
+前端下載：`getBlob` → 短效 `URL.createObjectURL`。
 
 ---
 
-## 4. 更正與作廢
+## 6. 查詢完整性
 
-資料不改，只往後接。
-
-```
-D 原始(25 人)         B 更正(35 人)          C 作廢墓碑
-_isLatest: false  →   _isLatest: false   →   _isLatest: true
-_supersededBy: B      _supersedes: D         _supersedes: B
-                      _supersededBy: C       _status: 'VOID'
-```
-
-兩個操作都在 `runTransaction` 裡完成：寫新文件 + 把舊文件的 `_isLatest` 設成 false。
-舊文件的**資料欄位一個都沒動**。
-
-Firestore 規則只放行這一種 update：
-
-```
-allow update: if isOwner()
-              && request.resource.data.diff(resource.data)
-                   .affectedKeys().hasOnly(['_isLatest', '_supersededBy'])
-              && resource.data._isLatest == true
-              && request.resource.data._isLatest == false;
-```
-
-單向、只能一次、只能動指標。`allow delete: if false`。
+- `in` / `array-contains-any` 以 `FIRESTORE_IN_LIMIT`（30）分批，**不截斷群組／模板清單**
+- 畫面查詢回 `{ rows, truncated }`（請求 `max+1` 偵測）
+- CSV 完整匯出走 `exportAllSubmissions`（分頁／加倍 max），避免靜默 500 筆上限
+- module／action 映射 `_templateModule`／`_templateAction`，不當作一般 KEY 篩選
 
 ---
 
-## 5. 查詢
+## 7. 語意日期／時間
 
-**目前有效的資料**，純索引查詢，讀的時候不做任何計算：
-
-```js
-where('_isLatest', '==', true)      // 是鏈頭
-where('_status', '==', 'ACTIVE')    // 不是作廢墓碑
-```
-
-**跨表查詢**，Universal KEY 的重點就在這裡：
-
-```js
-where('school', '==', '粵華中學')                    // 所有表格
-where('_templateModule', '==', 'CAMP')               // 某一類表格
-where('_submittedMonth', '==', '2026-01')            // 某個月（不做日期運算）
-```
-
-實作上分兩條路（`web/src/lib/db.ts` 的 `querySubmissions`）：
-
-- 一般篩選（表格 / 月份 / 鏈頭）走 `firestore.indexes.json` 裡定義好的複合索引
-- 跨表 KEY 查詢用單一等式條件（Firestore 自動索引），排序在前端做，
-  這樣新增任何 KEY 都不必再建索引
-
-讀取一律用 `getDocsFromServer` / `getDocFromServer`：離線時要明確報錯，
-不要拿本地快取回一份看起來「沒有資料」的空清單。
+- Date：`YYYY-MM-DD` 字串 KEY（見上）
+- Time：`HH:mm` 澳門牆鐘；**不**自動令 `endTime = startTime`
+- 點事件：`eventDate` + 可選 `eventTime`
+- 區間：`startDate`/`startTime` + 可選 `endDate`/`endTime`
+- `_submittedAt` 維持 Timestamp
 
 ---
 
-## 6. 權限
-
-只有一位擁有者，email 寫在三個地方且必須一致：
-
-| 位置 | 用途 |
-|------|------|
-| `web/.env.local` 的 `NEXT_PUBLIC_OWNER_EMAIL` | 前端判斷能不能進 Console |
-| `firestore.rules` 的 `owner()` | 資料庫層強制 |
-| `storage.rules` | 檔案層強制 |
-
-前端那個只是體驗，真正擋住的是後面兩個。
-
----
-
-## 7. 刻意不做的事
+## 8. 刻意不做的事
 
 | 不做 | 理由 |
 |------|------|
-| 角色與審核流程 | 只有一個人，多一道關卡只是多一道麻煩 |
-| 草稿送審 | 表格有 `enabled` 開關就夠了 |
-| Cloud Functions | 規則擋得住的事情不需要後端；少一個要部署的東西 |
-| 讀取時計算彙總 | 該算的在寫入當下就算完存好 |
-| 自訂欄位名稱 | 一旦允許，跨表查詢就完了 |
-| 刪除 submission | 事件紀錄不刪，要撤銷就寫一筆作廢 |
+| 公開 download URL 永久 token | 檔案 ACL 會被繞過 |
+| Manager 代為更正他人 | 所有權與稽核分離 |
+| 讀取時彙總 | 寫入當下已凍結 |
+| 自訂欄位 KEY | 破壞跨表查詢 |
+| 刪除 submission | 事件不刪，只作廢 |

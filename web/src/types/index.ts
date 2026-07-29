@@ -1,5 +1,5 @@
 // ============================================
-// 🦄 UNICORN Capture（單人版）— 型別定義
+// 🦄 UNICORN Capture — 型別定義
 //
 // 四層架構（Unicorn Architecture）
 //   Meaning      → optionSets   （選項池 / 字典）
@@ -14,6 +14,7 @@ export type FieldType =
   | 'textarea'
   | 'number'
   | 'date'
+  | 'time'
   | 'datetime'
   | 'dropdown'
   | 'file'
@@ -31,6 +32,9 @@ export interface FieldDefinition {
   multiple?: boolean
 }
 
+/** 誰可以填這張表 */
+export type FillAccessType = 'allOrgUsers' | 'groups'
+
 // ---------- Template（表格定義）----------
 export interface Template {
   id?: string
@@ -45,7 +49,11 @@ export interface Template {
   createdAt: unknown
   updatedAt: unknown
   _createdMonth: string
+  /** 可讀取此表所有 submission 的管理群組（不可更正/作廢他人） */
   managerGroups?: string[]
+  /** 填報 ACL：預設全組織；groups 時需屬於 fillGroups */
+  fillAccessType?: FillAccessType
+  fillGroups?: string[]
 }
 
 // ---------- UserRole (權限管理) ----------
@@ -80,19 +88,31 @@ export interface OptionSet {
 }
 
 // ---------- 檔案 ----------
+/** 只存 Storage path，不下載用永久 URL（避免 token 外洩） */
 export interface FileInfo {
   fieldKey: string
   path: string
   name: string
   mimeType: string
   size: number
-  url: string
   uploadedAt: string
   uploadedBy: string
+  /** @deprecated 舊資料可能仍有；新上傳不再寫入 */
+  url?: string
+}
+
+// ---------- Upload Session（送出前暫存）----------
+export interface UploadSession {
+  uid: string
+  email: string
+  submissionId: string
+  createdAt: unknown
+  expiresAt: unknown
 }
 
 // ---------- Submission（單一資料池）----------
 export type SubmissionStatus = 'ACTIVE' | 'VOID'
+export type SubmissionEventKind = 'CREATE' | 'CORRECTION' | 'VOID'
 
 export interface Submission {
   id?: string
@@ -102,8 +122,18 @@ export interface Submission {
   _templateName: string
   _templateModule: string
   _templateAction: string
+  /** 寫入當下：module.action，供未來路由／分析 */
+  _eventType: string
   _templateVersion: number
+
+  /** 穩定擁有者（更正鏈全程不變） */
+  _submitterUid: string
   _submitterEmail: string
+  /** 建立此版本的操作者 */
+  _actorUid: string
+  _actorEmail: string
+  _eventKind: SubmissionEventKind
+
   _submittedAt: unknown
   _submittedMonth: string
   _status: SubmissionStatus
@@ -118,7 +148,7 @@ export interface Submission {
   _optionLabels: Record<string, string>
   _fieldKeys: string[]
 
-  // 檔案
+  // 檔案（只含 path，不含永久 URL）
   files: FileInfo[]
 
   // 用戶資料以 Universal KEY 平鋪在頂層

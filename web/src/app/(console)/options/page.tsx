@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Layers, PenSquare, Plus, Trash2 } from 'lucide-react'
-import { useAuth } from '@/components/auth'
+import { SuperuserGuard, useAuth } from '@/components/auth'
 import { EmptyState, ErrorBanner, PageHeader, Spinner } from '@/components/ui'
 import {
   createOptionSet,
@@ -16,7 +16,7 @@ import {
 import { RESERVED_CODES, validateOptionSetCode } from '@/lib/keys'
 import type { OptionSet } from '@/types'
 
-export default function OptionsPage() {
+function OptionsPageInner() {
   const { email } = useAuth()
   const router = useRouter()
   const [sets, setSets] = useState<OptionSet[]>([])
@@ -231,5 +231,14 @@ export default function OptionsPage() {
         </div>
       )}
     </>
+  )
+}
+
+
+export default function OptionsPage() {
+  return (
+    <SuperuserGuard>
+      <OptionsPageInner />
+    </SuperuserGuard>
   )
 }

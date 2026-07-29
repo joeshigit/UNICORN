@@ -2,6 +2,7 @@
 
 import { DateTimePicker } from './DateTimePicker'
 import { FileUploader } from './FileUploader'
+import type { Actor } from '@/lib/db'
 import type { FieldDefinition, FileInfo, OptionItem } from '@/types'
 
 interface FieldInputProps {
@@ -11,7 +12,7 @@ interface FieldInputProps {
   options: OptionItem[]
   error?: string
   submissionId: string
-  userEmail: string
+  actor: Actor
 }
 
 export function FieldInput({
@@ -21,7 +22,7 @@ export function FieldInput({
   options,
   error,
   submissionId,
-  userEmail,
+  actor,
 }: FieldInputProps) {
   const cls = `field ${error ? 'field-error' : ''}`
   const placeholder = field.helpText || `輸入${field.label}`
@@ -59,6 +60,16 @@ export function FieldInput({
         />
       )
 
+    case 'time':
+      return (
+        <input
+          type="time"
+          className={cls}
+          value={(value as string) || ''}
+          onChange={e => onChange(e.target.value)}
+        />
+      )
+
     case 'datetime':
       return (
         <DateTimePicker
@@ -75,7 +86,7 @@ export function FieldInput({
           onChange={onChange}
           fieldKey={field.key}
           submissionId={submissionId}
-          userEmail={userEmail}
+          actor={actor}
           error={!!error}
         />
       )

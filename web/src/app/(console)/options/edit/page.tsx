@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
-import { useAuth } from '@/components/auth'
+import { SuperuserGuard, useAuth } from '@/components/auth'
 import { ErrorBanner, PageHeader, Spinner } from '@/components/ui'
 import { createSubset, getOptionSet, updateOptionSet } from '@/lib/db'
 import { parseOptionLines } from '@/lib/csv'
@@ -336,8 +336,10 @@ function OptionSetEditor() {
 
 export default function OptionSetEditPage() {
   return (
-    <Suspense fallback={<Spinner />}>
-      <OptionSetEditor />
-    </Suspense>
+    <SuperuserGuard>
+      <Suspense fallback={<Spinner />}>
+        <OptionSetEditor />
+      </Suspense>
+    </SuperuserGuard>
   )
 }

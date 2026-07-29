@@ -1,19 +1,10 @@
 // ============================================
-// 🦄 UNICORN Capture（單人版）— Firestore 資料層
+// 🦄 UNICORN Capture — Firestore 資料層
 //
-// 三個 collection，對應 Unicorn 的三層：
-//   optionSets   Meaning     選項池（KEY 的定義 + VALUE 的字典）
-//   templates    Template    表格定義（純資料，不是程式碼）
-//   submissions  Submission  單一資料池，不可變事件
-//
-// 寫入當下（write-time）就決定好的東西，全部存進 submission：
-//   _templateName / _templateVersion  表格快照
-//   _fieldLabels / _optionLabels      顯示用文字快照
-//   _submittedMonth                   月份查詢鍵
-//   Universal KEY 平鋪在頂層          跨表查詢不需要 join
-//
-// 讀取一律用 *FromServer：離線時要明確報錯，不要拿本地快取
-// 回一份看起來「沒有資料」的空清單。
+// 四層：
+//   optionSets / templates / submissions / uploadSessions(+derived)
+// 寫入當下決定好的衍生值全部存進 submission。
+// 讀取一律用 *FromServer。
 // ============================================
 
 import {
@@ -28,28 +19,57 @@ import {
   where,
   orderBy,
   limit as fsLimit,
+  startAfter,
   runTransaction,
   serverTimestamp,
   QueryConstraint,
+  QueryDocumentSnapshot,
+  DocumentData,
   Timestamp,
 } from 'firebase/firestore'
 import { db } from './firebase'
-import { MODULE_CODE, ACTION_CODE, MANAGER_GROUP_CODE, combinedKey, countKey } from './keys'
+import { BUSINESS_TIMEZONE } from './config'
+import {
+  MODULE_CODE,
+  ACTION_CODE,
+  MANAGER_GROUP_CODE,
+  combinedKey,
+  countKey,
+  isLegacyDateKey,
+} from './keys'
 import type {
   FieldDefinition,
   FileInfo,
+  FillAccessType,
   OptionItem,
   OptionSet,
   Submission,
+  SubmissionEventKind,
   SubmissionStatus,
   Template,
   UserRole,
 } from '@/types'
 
+/** Firestore `in` / `array-contains-any` 目前 disjunction 上限 */
+export const FIRESTORE_IN_LIMIT = 30
+
+export interface Actor {
+  uid: string
+  email: string
+}
+
 // ---------- 共用小工具 ----------
 
+/** 以 Asia/Macau 計算 YYYY-MM */
 export function currentMonth(date: Date = new Date()): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: BUSINESS_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(date)
+  const y = parts.find(p => p.type === 'year')?.value
+  const m = parts.find(p => p.type === 'month')?.value
+  return `${y}-${m}`
 }
 
 export function toDate(value: unknown): Date | null {
@@ -75,8 +95,41 @@ function newId(collectionName: string): string {
   return doc(collection(db, collectionName)).id
 }
 
+function chunk<T>(items: T[], size: number): T[][] {
+  if (items.length === 0) return []
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
+}
+
+export function eventTypeOf(moduleId: string, actionId: string): string {
+  return `${moduleId}.${actionId}`
+}
+
+/** 掃描模板是否仍使用已退役日期 KEY */
+export function findLegacyDateKeyUsage(
+  templates: Template[]
+): Array<{ templateId: string; templateName: string; keys: string[] }> {
+  return templates
+    .map(t => ({
+      templateId: t.id || '',
+      templateName: t.name,
+      keys: t.fields.map(f => f.key).filter(isLegacyDateKey),
+    }))
+    .filter(x => x.keys.length > 0)
+}
+
+export function canUserFillTemplate(template: Template, groups: string[], isSuperuser: boolean): boolean {
+  if (isSuperuser) return !!template.enabled
+  if (!template.enabled) return false
+  const access: FillAccessType = template.fillAccessType || 'allOrgUsers'
+  if (access === 'allOrgUsers') return true
+  const fillGroups = template.fillGroups || []
+  return fillGroups.some(g => groups.includes(g))
+}
+
 // ============================================
-// User Roles (權限管理)
+// User Roles
 // ============================================
 
 export async function getUserRole(email: string): Promise<UserRole | null> {
@@ -88,12 +141,47 @@ export async function updateUserGroups(email: string, groups: string[], byEmail:
   await setDoc(doc(db, 'userRoles', email.toLowerCase()), {
     groups,
     updatedAt: serverTimestamp(),
-    updatedBy: byEmail
+    updatedBy: byEmail,
   })
 }
 
 // ============================================
-// OptionSets（選項池）
+// Upload Sessions
+// ============================================
+
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000
+
+export async function ensureUploadSession(submissionId: string, actor: Actor): Promise<void> {
+  await setDoc(
+    doc(db, 'uploadSessions', submissionId),
+    {
+      uid: actor.uid,
+      email: actor.email.toLowerCase(),
+      submissionId,
+      createdAt: serverTimestamp(),
+      expiresAt: Timestamp.fromDate(new Date(Date.now() + SESSION_TTL_MS)),
+    },
+    { merge: true }
+  )
+}
+
+export async function deleteUploadSession(submissionId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'uploadSessions', submissionId))
+  } catch {
+    // 忽略
+  }
+}
+
+/**
+ * 孤兒 session／檔案清理設計（稍後排程後端實作，不放寬 Storage 規則）：
+ * 1. 列出 expiresAt < now 的 uploadSessions
+ * 2. 若對應 submissions/{id} 不存在 → 刪除 Storage uploads/{uid}/{id}/** 與 session
+ * 3. 若 submission 已存在 → 只刪 session（檔案已定稿）
+ */
+
+// ============================================
+// OptionSets
 // ============================================
 
 export async function listOptionSets(): Promise<OptionSet[]> {
@@ -167,7 +255,6 @@ export async function deleteOptionSet(id: string): Promise<void> {
   await deleteDoc(doc(db, 'optionSets', id))
 }
 
-// 子集只能挑 Master 已有的 value，確保存進 submission 的 VALUE 永遠標準化
 export async function createSubset(
   master: OptionSet,
   name: string,
@@ -193,7 +280,6 @@ export async function createSubset(
   )
 }
 
-// module / action 是建表時的分類與動作，第一次進系統自動建立
 export async function ensureCoreOptionSets(userEmail: string): Promise<void> {
   const existing = await listOptionSets()
   const codes = new Set(existing.map(os => os.code))
@@ -201,7 +287,11 @@ export async function ensureCoreOptionSets(userEmail: string): Promise<void> {
   const seeds: Array<{ code: string; name: string; items: string[] }> = [
     { code: MODULE_CODE, name: '表格分類', items: ['GENERAL'] },
     { code: ACTION_CODE, name: '表格動作', items: ['RECORD'] },
-    { code: MANAGER_GROUP_CODE, name: '管理員群組', items: ['SCD Manager', 'Admin Manager', 'Training Manager'] },
+    {
+      code: MANAGER_GROUP_CODE,
+      name: '管理員群組',
+      items: ['SCD Manager', 'Admin Manager', 'Training Manager'],
+    },
   ]
 
   for (const seed of seeds) {
@@ -219,7 +309,7 @@ export async function ensureCoreOptionSets(userEmail: string): Promise<void> {
 }
 
 // ============================================
-// Templates（表格定義）
+// Templates
 // ============================================
 
 export async function listTemplates(): Promise<Template[]> {
@@ -239,6 +329,8 @@ export interface TemplateInput {
   description?: string
   enabled: boolean
   managerGroups?: string[]
+  fillAccessType?: FillAccessType
+  fillGroups?: string[]
   fields: FieldDefinition[]
 }
 
@@ -259,6 +351,7 @@ function cleanFields(fields: FieldDefinition[]): FieldDefinition[] {
 
 export async function createTemplate(input: TemplateInput, userEmail: string): Promise<string> {
   const id = newId('templates')
+  const fillAccessType: FillAccessType = input.fillAccessType || 'allOrgUsers'
   await setDoc(
     doc(db, 'templates', id),
     stripUndefined({
@@ -268,6 +361,8 @@ export async function createTemplate(input: TemplateInput, userEmail: string): P
       description: input.description?.trim() || '',
       enabled: input.enabled,
       managerGroups: input.managerGroups || [],
+      fillAccessType,
+      fillGroups: fillAccessType === 'groups' ? input.fillGroups || [] : [],
       version: 1,
       fields: cleanFields(input.fields),
       createdBy: userEmail,
@@ -279,13 +374,13 @@ export async function createTemplate(input: TemplateInput, userEmail: string): P
   return id
 }
 
-// 改欄位 = 換版本。已提交的資料帶著舊 version 與舊 label 快照，不受影響。
 export async function updateTemplate(
   id: string,
   input: TemplateInput,
   currentVersion: number,
   fieldsChanged: boolean
 ): Promise<void> {
+  const fillAccessType: FillAccessType = input.fillAccessType || 'allOrgUsers'
   await updateDoc(doc(db, 'templates', id), {
     name: input.name.trim(),
     moduleId: input.moduleId,
@@ -293,6 +388,8 @@ export async function updateTemplate(
     description: input.description?.trim() || '',
     enabled: input.enabled,
     managerGroups: input.managerGroups || [],
+    fillAccessType,
+    fillGroups: fillAccessType === 'groups' ? input.fillGroups || [] : [],
     version: fieldsChanged ? currentVersion + 1 : currentVersion,
     fields: cleanFields(input.fields),
     updatedAt: serverTimestamp(),
@@ -314,8 +411,21 @@ export async function countSubmissionsForTemplate(templateId: string): Promise<n
   return snap.size
 }
 
+/** 分批查詢使用者可管理的模板（不截斷群組） */
+export async function listManagedTemplateIds(groups: string[]): Promise<string[]> {
+  if (groups.length === 0) return []
+  const ids = new Set<string>()
+  for (const batch of chunk(groups, FIRESTORE_IN_LIMIT)) {
+    const snap = await getDocsFromServer(
+      query(collection(db, 'templates'), where('managerGroups', 'array-contains-any', batch))
+    )
+    for (const d of snap.docs) ids.add(d.id)
+  }
+  return Array.from(ids)
+}
+
 // ============================================
-// Submissions（單一資料池）
+// Submissions
 // ============================================
 
 export interface SubmitInput {
@@ -323,7 +433,6 @@ export interface SubmitInput {
   values: Record<string, unknown>
   files: FileInfo[]
   optionLabels: Record<string, string>
-  // 欄位 KEY → 該選項池的完整值清單，用來決定組合字串的標準順序
   optionOrder: Record<string, string[]>
 }
 
@@ -333,18 +442,20 @@ function asArray(value: unknown): string[] {
   return [String(value)]
 }
 
-// 組合字串一律照選項池的排序產生，跟使用者點選的先後無關。
-// 否則「A, B」和「B, A」會被當成兩種組合，分組統計就散了。
 function canonicalOrder(picked: string[], order?: string[]): string[] {
   const unique = Array.from(new Set(picked))
   if (!order || order.length === 0) return unique.sort()
   const rank = new Map(order.map((value, index) => [value, index]))
-  return unique.sort((a, b) => (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER))
+  return unique.sort(
+    (a, b) => (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER)
+  )
 }
 
 function buildSubmissionDoc(
   input: SubmitInput,
-  userEmail: string,
+  owner: Actor,
+  actor: Actor,
+  eventKind: SubmissionEventKind,
   extra: Partial<Submission>
 ): Record<string, unknown> {
   const { template, values, files, optionLabels, optionOrder } = input
@@ -356,13 +467,21 @@ function buildSubmissionDoc(
     fieldKeys.push(field.key)
   }
 
+  // 檔案 metadata 不存永久 URL
+  const safeFiles = files.map(({ url: _url, ...rest }) => rest)
+
   const payload: Record<string, unknown> = {
     _templateId: template.id,
     _templateName: template.name,
     _templateModule: template.moduleId,
     _templateAction: template.actionId,
+    _eventType: eventTypeOf(template.moduleId, template.actionId),
     _templateVersion: template.version,
-    _submitterEmail: userEmail,
+    _submitterUid: owner.uid,
+    _submitterEmail: owner.email.toLowerCase(),
+    _actorUid: actor.uid,
+    _actorEmail: actor.email.toLowerCase(),
+    _eventKind: eventKind,
     _submittedAt: serverTimestamp(),
     _submittedMonth: currentMonth(),
     _status: 'ACTIVE' as SubmissionStatus,
@@ -370,13 +489,11 @@ function buildSubmissionDoc(
     _fieldLabels: fieldLabels,
     _optionLabels: optionLabels,
     _fieldKeys: fieldKeys,
-    files,
+    files: safeFiles,
     ...extra,
   }
 
-  // Universal KEY 平鋪在頂層，跨表查詢直接 where(key, ...)
   for (const field of template.fields) {
-    // 下拉欄位一律寫成三個形狀，單選複選都一樣，見 lib/keys.ts
     if (field.type === 'dropdown') {
       const picked = canonicalOrder(asArray(values[field.key]), optionOrder[field.key])
       payload[field.key] = picked
@@ -394,53 +511,62 @@ function buildSubmissionDoc(
   return stripUndefined(payload)
 }
 
-// 提前產生 ID，讓檔案可以在送出前就上傳到對應的資料夾
 export function newSubmissionId(): string {
   return newId('submissions')
 }
 
 export async function createSubmission(
   input: SubmitInput,
-  userEmail: string,
+  actor: Actor,
   id: string = newId('submissions')
 ): Promise<string> {
-  await setDoc(doc(db, 'submissions', id), buildSubmissionDoc(input, userEmail, {}))
+  await setDoc(doc(db, 'submissions', id), buildSubmissionDoc(input, actor, actor, 'CREATE', {}))
+  await deleteUploadSession(id)
   return id
 }
 
-// 更正：原紀錄一個字都不改，只把鏈頭指標移到新紀錄上。
 export async function correctSubmission(
   originalId: string,
   input: SubmitInput,
-  userEmail: string,
+  actor: Actor,
   newSubmissionId: string = newId('submissions')
 ): Promise<string> {
   await runTransaction(db, async tx => {
     const originalRef = doc(db, 'submissions', originalId)
     const original = await tx.get(originalRef)
     if (!original.exists()) throw new Error('找不到原始紀錄')
-    if (original.data()._isLatest !== true) throw new Error('這筆紀錄已經被更正過了')
+    const data = original.data()
+    if (data._isLatest !== true) throw new Error('這筆紀錄已經被更正過了')
+
+    const owner: Actor = {
+      uid: String(data._submitterUid || actor.uid),
+      email: String(data._submitterEmail || actor.email),
+    }
 
     tx.set(
       doc(db, 'submissions', newSubmissionId),
-      buildSubmissionDoc(input, userEmail, { _supersedes: originalId })
+      buildSubmissionDoc(input, owner, actor, 'CORRECTION', { _supersedes: originalId })
     )
     tx.update(originalRef, { _isLatest: false, _supersededBy: newSubmissionId })
   })
+  await deleteUploadSession(newSubmissionId)
   return newSubmissionId
 }
 
-// 作廢：同樣不改原紀錄，寫一筆 VOID 的墓碑接在鏈頭。
-export async function voidSubmission(original: Submission, userEmail: string): Promise<string> {
+export async function voidSubmission(original: Submission, actor: Actor): Promise<string> {
   const originalId = original.id!
   const voidId = newId('submissions')
 
-  // 墓碑要帶著原本的資料，包含下拉欄位的三個衍生形狀
   const copy: Record<string, unknown> = {}
   for (const key of original._fieldKeys || []) {
     for (const candidate of [key, combinedKey(key), countKey(key)]) {
       if (original[candidate] !== undefined) copy[candidate] = original[candidate]
     }
+  }
+
+  const owner: Actor = {
+    uid: original._submitterUid || actor.uid,
+    email: original._submitterEmail || actor.email,
   }
 
   await runTransaction(db, async tx => {
@@ -457,8 +583,13 @@ export async function voidSubmission(original: Submission, userEmail: string): P
         _templateName: original._templateName,
         _templateModule: original._templateModule,
         _templateAction: original._templateAction,
+        _eventType: original._eventType || eventTypeOf(original._templateModule, original._templateAction),
         _templateVersion: original._templateVersion,
-        _submitterEmail: userEmail,
+        _submitterUid: owner.uid,
+        _submitterEmail: owner.email.toLowerCase(),
+        _actorUid: actor.uid,
+        _actorEmail: actor.email.toLowerCase(),
+        _eventKind: 'VOID' as SubmissionEventKind,
         _submittedAt: serverTimestamp(),
         _submittedMonth: currentMonth(),
         _status: 'VOID' as SubmissionStatus,
@@ -467,7 +598,7 @@ export async function voidSubmission(original: Submission, userEmail: string): P
         _fieldLabels: original._fieldLabels,
         _optionLabels: original._optionLabels,
         _fieldKeys: original._fieldKeys,
-        files: original.files || [],
+        files: (original.files || []).map(({ url: _url, ...rest }) => rest),
       })
     )
     tx.update(originalRef, { _isLatest: false, _supersededBy: voidId })
@@ -481,84 +612,95 @@ export interface SubmissionQuery {
   month?: string
   status?: SubmissionStatus | 'ALL'
   includeSuperseded?: boolean
+  /** 對應 _templateModule */
+  module?: string
+  /** 對應 _templateAction */
+  action?: string
   fieldKey?: string
   fieldValue?: string
   max?: number
+}
+
+export interface SubmissionQueryResult {
+  rows: Submission[]
+  truncated: boolean
+}
+
+function mapDocs(docs: QueryDocumentSnapshot<DocumentData>[]): Submission[] {
+  return docs.map(d => ({ id: d.id, ...d.data() } as Submission))
+}
+
+function sortBySubmittedAtDesc(rows: Submission[]): Submission[] {
+  return rows.sort((a, b) => {
+    const at = toDate(a._submittedAt)?.getTime() ?? 0
+    const bt = toDate(b._submittedAt)?.getTime() ?? 0
+    return bt - at
+  })
+}
+
+async function fetchIsolationDocs(
+  baseConstraints: QueryConstraint[],
+  userEmail: string,
+  isSuperuser: boolean,
+  managedTemplateIds: string[]
+): Promise<QueryDocumentSnapshot<DocumentData>[]> {
+  if (isSuperuser) {
+    const snap = await getDocsFromServer(query(collection(db, 'submissions'), ...baseConstraints))
+    return snap.docs
+  }
+
+  const merged = new Map<string, QueryDocumentSnapshot<DocumentData>>()
+
+  const ownSnap = await getDocsFromServer(
+    query(
+      collection(db, 'submissions'),
+      where('_submitterEmail', '==', userEmail.toLowerCase()),
+      ...baseConstraints
+    )
+  )
+  for (const d of ownSnap.docs) merged.set(d.id, d)
+
+  for (const batch of chunk(managedTemplateIds, FIRESTORE_IN_LIMIT)) {
+    const managedSnap = await getDocsFromServer(
+      query(collection(db, 'submissions'), where('_templateId', 'in', batch), ...baseConstraints)
+    )
+    for (const d of managedSnap.docs) merged.set(d.id, d)
+  }
+
+  return Array.from(merged.values())
 }
 
 export async function querySubmissions(
   q: SubmissionQuery = {},
   userEmail: string,
   isSuperuser: boolean
-): Promise<Submission[]> {
+): Promise<SubmissionQueryResult> {
   const max = q.max ?? 500
+  const fetchLimit = max + 1
   const status = q.status ?? 'ACTIVE'
   const hasFieldFilter = !!(q.fieldKey && q.fieldValue)
 
-  let rows: Submission[]
   let managedTemplateIds: string[] = []
-
-  // 如果不是 Superuser，先檢查是不是 Manager，找出他能管的表格
   if (!isSuperuser) {
     const role = await getUserRole(userEmail)
-    const myGroups = role?.groups || []
-    if (myGroups.length > 0) {
-      // 這邊用 array-contains-any，所以最多只能有 10 個群組（Firestore 限制）
-      const tq = query(
-        collection(db, 'templates'),
-        where('managerGroups', 'array-contains-any', myGroups.slice(0, 10))
-      )
-      const templatesSnap = await getDocsFromServer(tq)
-      managedTemplateIds = templatesSnap.docs.map(d => d.id)
-    }
+    managedTemplateIds = await listManagedTemplateIds(role?.groups || [])
   }
 
-  // 輔助函式：當需要限縮讀取範圍時，處理 Firestore OR 查詢的問題。
-  // 因為 Firestore 不能輕易混合 `where('_submitterEmail') OR where('_templateId', 'in')`
-  // 所以我們在前端分兩次抓回來再合併。
-  const fetchWithIsolation = async (baseConstraints: QueryConstraint[]) => {
-    if (isSuperuser) {
-      const snap = await getDocsFromServer(query(collection(db, 'submissions'), ...baseConstraints))
-      return snap.docs
-    }
-
-    // 1. 抓自己填的
-    const ownQ = query(
-      collection(db, 'submissions'),
-      where('_submitterEmail', '==', userEmail),
-      ...baseConstraints
-    )
-    const ownSnap = await getDocsFromServer(ownQ)
-    const docs = [...ownSnap.docs]
-
-    // 2. 抓自己管的表格的（如果不超過 10 張表，可以用 in，超過要分批，這裡簡化處理前 10 張）
-    if (managedTemplateIds.length > 0) {
-      const managedQ = query(
-        collection(db, 'submissions'),
-        where('_templateId', 'in', managedTemplateIds.slice(0, 10)),
-        ...baseConstraints
-      )
-      const managedSnap = await getDocsFromServer(managedQ)
-      docs.push(...managedSnap.docs)
-    }
-
-    // 3. 去重
-    const merged = new Map()
-    for (const d of docs) merged.set(d.id, d)
-    return Array.from(merged.values())
-  }
+  let rows: Submission[]
 
   if (hasFieldFilter) {
-    // 跨表查詢：同時跑 == 和 array-contains
-    const exactDocs = await fetchWithIsolation([
-      where(q.fieldKey!, '==', q.fieldValue!),
-      fsLimit(max),
-    ])
-    const containsDocs = await fetchWithIsolation([
-      where(q.fieldKey!, 'array-contains', q.fieldValue!),
-      fsLimit(max),
-    ])
-
+    const exactDocs = await fetchIsolationDocs(
+      [where(q.fieldKey!, '==', q.fieldValue!), fsLimit(fetchLimit)],
+      userEmail,
+      isSuperuser,
+      managedTemplateIds
+    )
+    const containsDocs = await fetchIsolationDocs(
+      [where(q.fieldKey!, 'array-contains', q.fieldValue!), fsLimit(fetchLimit)],
+      userEmail,
+      isSuperuser,
+      managedTemplateIds
+    )
     const merged = new Map<string, Submission>()
     for (const d of [...exactDocs, ...containsDocs]) {
       merged.set(d.id, { id: d.id, ...d.data() } as Submission)
@@ -569,25 +711,89 @@ export async function querySubmissions(
     if (!q.includeSuperseded) constraints.push(where('_isLatest', '==', true))
     if (q.templateId) constraints.push(where('_templateId', '==', q.templateId))
     if (q.month) constraints.push(where('_submittedMonth', '==', q.month))
-    constraints.push(orderBy('_submittedAt', 'desc'), fsLimit(max))
+    if (q.module) constraints.push(where('_templateModule', '==', q.module))
+    if (q.action) constraints.push(where('_templateAction', '==', q.action))
+    constraints.push(orderBy('_submittedAt', 'desc'), fsLimit(fetchLimit))
 
-    const docs = await fetchWithIsolation(constraints)
-    rows = docs.map(d => ({ id: d.id, ...d.data() } as Submission))
+    const docs = await fetchIsolationDocs(constraints, userEmail, isSuperuser, managedTemplateIds)
+    rows = mapDocs(docs)
   }
 
   if (hasFieldFilter) {
     if (!q.includeSuperseded) rows = rows.filter(r => r._isLatest === true)
     if (q.templateId) rows = rows.filter(r => r._templateId === q.templateId)
     if (q.month) rows = rows.filter(r => r._submittedMonth === q.month)
+    if (q.module) rows = rows.filter(r => r._templateModule === q.module)
+    if (q.action) rows = rows.filter(r => r._templateAction === q.action)
   }
 
   if (status !== 'ALL') rows = rows.filter(r => r._status === status)
 
-  return rows.sort((a, b) => {
-    const at = toDate(a._submittedAt)?.getTime() ?? 0
-    const bt = toDate(b._submittedAt)?.getTime() ?? 0
-    return bt - at
-  })
+  rows = sortBySubmittedAtDesc(rows)
+  const truncated = rows.length > max
+  if (truncated) rows = rows.slice(0, max)
+
+  return { rows, truncated }
+}
+
+/** 分頁完整匯出：不靜默停在 500 */
+export async function exportAllSubmissions(
+  q: SubmissionQuery = {},
+  userEmail: string,
+  isSuperuser: boolean,
+  pageSize = 500
+): Promise<Submission[]> {
+  const all: Submission[] = []
+  let page = 0
+  const hardCap = 50_000
+
+  // 非 Superuser 仍走 isolation 合併路徑（無法用單一 cursor）；分批提高 max
+  if (!isSuperuser) {
+    let cursorMax = pageSize
+    while (cursorMax <= hardCap) {
+      const { rows, truncated } = await querySubmissions(
+        { ...q, max: cursorMax },
+        userEmail,
+        isSuperuser
+      )
+      if (!truncated) return rows
+      cursorMax *= 2
+    }
+    throw new Error('匯出筆數超過上限，請縮小篩選條件')
+  }
+
+  // Superuser：真正 cursor 分頁
+  let last: QueryDocumentSnapshot<DocumentData> | null = null
+  while (all.length < hardCap) {
+    const constraints: QueryConstraint[] = []
+    if (!q.includeSuperseded) constraints.push(where('_isLatest', '==', true))
+    if (q.templateId) constraints.push(where('_templateId', '==', q.templateId))
+    if (q.month) constraints.push(where('_submittedMonth', '==', q.month))
+    if (q.module) constraints.push(where('_templateModule', '==', q.module))
+    if (q.action) constraints.push(where('_templateAction', '==', q.action))
+    if (q.status && q.status !== 'ALL') constraints.push(where('_status', '==', q.status))
+    constraints.push(orderBy('_submittedAt', 'desc'), fsLimit(pageSize))
+    if (last) constraints.push(startAfter(last))
+
+    const snap = await getDocsFromServer(query(collection(db, 'submissions'), ...constraints))
+    if (snap.empty) break
+
+    let batch = mapDocs(snap.docs)
+    if (q.fieldKey && q.fieldValue) {
+      batch = batch.filter(r => {
+        const raw = r[q.fieldKey!]
+        if (Array.isArray(raw)) return raw.includes(q.fieldValue!)
+        return raw === q.fieldValue
+      })
+    }
+    all.push(...batch)
+    last = snap.docs[snap.docs.length - 1]
+    page += 1
+    if (snap.docs.length < pageSize) break
+    if (page > 200) break
+  }
+
+  return sortBySubmittedAtDesc(all)
 }
 
 export async function getSubmission(id: string): Promise<Submission | null> {
@@ -595,12 +801,11 @@ export async function getSubmission(id: string): Promise<Submission | null> {
   return snap.exists() ? ({ id: snap.id, ...snap.data() } as Submission) : null
 }
 
-// 最近 N 個月，給篩選器用（不必查資料庫）
 export function recentMonths(count = 18): string[] {
   const out: string[] = []
   const now = new Date()
   for (let i = 0; i < count; i++) {
-    out.push(currentMonth(new Date(now.getFullYear(), now.getMonth() - i, 1)))
+    out.push(currentMonth(new Date(now.getFullYear(), now.getMonth() - i, 15)))
   }
   return out
 }

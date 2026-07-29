@@ -3,21 +3,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, getDocs } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
-import { useAuth } from '@/components/auth'
+import { SuperuserGuard, useAuth } from '@/components/auth'
 import { EmptyState, ErrorBanner, PageHeader, Spinner } from '@/components/ui'
 import { getUserRole, updateUserGroups, listOptionSets } from '@/lib/db'
 import { MANAGER_GROUP_CODE } from '@/lib/keys'
 import type { OptionSet, UserRole } from '@/types'
 
-export default function UsersPage() {
-  const { email, isSuperuser } = useAuth()
-  
+function UsersPageInner() {
+  const { email } = useAuth()
+
   const [optionSets, setOptionSets] = useState<OptionSet[]>([])
   const [roles, setRoles] = useState<UserRole[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
-  
+
   const [editingEmail, setEditingEmail] = useState('')
   const [editingGroups, setEditingGroups] = useState<string[]>([])
 
@@ -39,8 +39,8 @@ export default function UsersPage() {
   }
 
   useEffect(() => {
-    if (isSuperuser) load()
-  }, [isSuperuser])
+    load()
+  }, [])
 
   const managerGroupItems = useMemo(() => {
     const master = optionSets.find(os => os.code === MANAGER_GROUP_CODE && os.isMaster)
@@ -73,8 +73,6 @@ export default function UsersPage() {
     setEditingGroups([])
     setError('')
   }
-
-  if (!isSuperuser) return null
 
   return (
     <>
@@ -195,5 +193,13 @@ export default function UsersPage() {
         </div>
       )}
     </>
+  )
+}
+
+export default function UsersPage() {
+  return (
+    <SuperuserGuard>
+      <UsersPageInner />
+    </SuperuserGuard>
   )
 }

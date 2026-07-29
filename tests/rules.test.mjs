@@ -1,5 +1,5 @@
 // ============================================
-// firestore.rules 測試
+// firestore.rules 測試（Step 1–2 Stabilization）
 //
 // 跑之前要先開模擬器：
 //   npx firebase emulators:start --only firestore --project demo-unicorn
@@ -17,21 +17,50 @@ import {
   assertFails,
   assertSucceeds,
 } from '@firebase/rules-unit-testing'
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs } from 'firebase/firestore'
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  collection,
+  getDocs,
+} from 'firebase/firestore'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const OWNER = 'joeshi@dbyv.org'
+const SUPER = 'joeshi@dbyv.org'
 const OTHER = 'someone@dbyv.org'
+const OUTSIDER = 'outsider@gmail.com'
+const MANAGER = 'manager@dbyv.org'
 
 let testEnv
 
+const auth = (email, uid = email.replace(/[^a-z0-9]/gi, '_')) =>
+  testEnv.authenticatedContext(uid, {
+    email,
+    email_verified: true,
+  }).firestore()
+
+const unverified = email =>
+  testEnv.authenticatedContext('unverified', {
+    email,
+    email_verified: false,
+  }).firestore()
+
+const anonDb = () => testEnv.unauthenticatedContext().firestore()
+
 const submission = (overrides = {}) => ({
-  _templateId: 'tpl1',
+  _templateId: 'tpl_open',
   _templateName: '測試表',
   _templateModule: 'CAMP',
   _templateAction: 'REGISTER',
+  _eventType: 'CAMP.REGISTER',
   _templateVersion: 1,
-  _submitterEmail: OWNER,
+  _submitterUid: 'someone_dbyv_org',
+  _submitterEmail: OTHER,
+  _actorUid: 'someone_dbyv_org',
+  _actorEmail: OTHER,
+  _eventKind: 'CREATE',
   _submittedAt: new Date(),
   _submittedMonth: '2026-07',
   _status: 'ACTIVE',
@@ -41,6 +70,19 @@ const submission = (overrides = {}) => ({
   _fieldKeys: ['quantity1'],
   files: [],
   quantity1: 30,
+  ...overrides,
+})
+
+const openTemplate = (overrides = {}) => ({
+  name: '開放表',
+  enabled: true,
+  fillAccessType: 'allOrgUsers',
+  fillGroups: [],
+  managerGroups: [],
+  moduleId: 'CAMP',
+  actionId: 'REGISTER',
+  version: 1,
+  fields: [],
   ...overrides,
 })
 
@@ -59,149 +101,318 @@ after(async () => {
   await testEnv?.cleanup()
 })
 
-const ownerDb = () => testEnv.authenticatedContext(OWNER, { email: OWNER }).firestore()
-const otherDb = () => testEnv.authenticatedContext(OTHER, { email: OTHER }).firestore()
-const anonDb = () => testEnv.unauthenticatedContext().firestore()
-
 const seed = (path, data) =>
   testEnv.withSecurityRulesDisabled(ctx => setDoc(doc(ctx.firestore(), path), data))
 
-describe('Multi-User 存取控制', () => {
+describe('組織網域身分邊界', () => {
   before(() => testEnv.clearFirestore())
 
-  it('未登入不能讀 submissions', async () => {
+  it('未登入不能讀任何資料', async () => {
+    await seed('submissions/s1', submission())
     await assertFails(getDocs(collection(anonDb(), 'submissions')))
+    await assertFails(getDocs(collection(anonDb(), 'optionSets')))
   })
 
-  it('一般使用者只能讀自己的 submissions，不能讀別人的', async () => {
-    await seed('submissions/owner_sub', submission({ _submitterEmail: OWNER }))
-    await seed('submissions/other_sub', submission({ _submitterEmail: OTHER }))
-
-    // Read single
-    await assertFails(getDoc(doc(otherDb(), 'submissions/owner_sub')))
-    await assertSucceeds(getDoc(doc(otherDb(), 'submissions/other_sub')))
-
-    // Query (Requires _submitterEmail filter)
-    await assertFails(getDocs(collection(otherDb(), 'submissions')))
-    const q = testEnv.unauthenticatedContext().firestore().collection('submissions') // dummy to build query
-    // Can't use unauthenticated to build queries easily in rules-unit-testing if we want them executed by otherDb, 
-    // but we know getting the whole collection fails.
+  it('未驗證 email 的組織帳號無法讀', async () => {
+    await seed('optionSets/o1', { code: 'school' })
+    await assertFails(getDoc(doc(unverified(OTHER), 'optionSets/o1')))
   })
 
-  it('Superuser 可以讀所有 submissions', async () => {
-    await seed('submissions/other_sub', submission({ _submitterEmail: OTHER }))
-    await assertSucceeds(getDoc(doc(ownerDb(), 'submissions/other_sub')))
+  it('組織使用者可以讀 optionSets，但不能寫', async () => {
+    await seed('optionSets/o1', { code: 'school', name: '學校' })
+    await assertSucceeds(getDoc(doc(auth(OTHER), 'optionSets/o1')))
+    await assertFails(setDoc(doc(auth(OTHER), 'optionSets/o2'), { code: 'dept' }))
   })
 
-  it('一般使用者可以讀取 templates 來填表', async () => {
-    await seed('templates/t1', { name: '營會登記表' })
-    await assertSucceeds(getDoc(doc(otherDb(), 'templates/t1')))
-  })
-
-  it('Form Manager 可以讀取自己管理的表格的 submissions', async () => {
-    // 1. Seed user role for OTHER
-    await seed(`userRoles/${OTHER}`, { groups: ['SCD Manager'] })
-    
-    // 2. Seed template with manager group
-    await seed('templates/t_managed', { name: 'SCD Report', managerGroups: ['SCD Manager'] })
-    await seed('templates/t_unmanaged', { name: 'HR Report', managerGroups: ['HR Manager'] })
-    
-    // 3. Seed submissions for both templates
-    await seed('submissions/sub_managed', submission({ _submitterEmail: OWNER, _templateId: 't_managed' }))
-    await seed('submissions/sub_unmanaged', submission({ _submitterEmail: OWNER, _templateId: 't_unmanaged' }))
-    
-    // 4. Test access
-    await assertSucceeds(getDoc(doc(otherDb(), 'submissions/sub_managed'))) // Allowed via group
-    await assertFails(getDoc(doc(otherDb(), 'submissions/sub_unmanaged'))) // Denied
-  })
-
-  it('一般使用者不能建表或改表', async () => {
-    await assertFails(setDoc(doc(otherDb(), 'templates/t2'), { name: '偷建的' }))
-  })
-
-  it('一般使用者不能改選項池', async () => {
-    await assertFails(setDoc(doc(otherDb(), 'optionSets/o1'), { code: 'school' }))
-  })
-
-  it('Superuser 可以建立表格與選項池', async () => {
-    await assertSucceeds(setDoc(doc(ownerDb(), 'templates/t1'), { name: '營會登記表' }))
-    await assertSucceeds(setDoc(doc(ownerDb(), 'optionSets/o1'), { code: 'school' }))
+  it('Superuser 可以寫 optionSets / templates', async () => {
+    await assertSucceeds(setDoc(doc(auth(SUPER), 'optionSets/o1'), { code: 'school' }))
+    await assertSucceeds(setDoc(doc(auth(SUPER), 'templates/t1'), openTemplate()))
   })
 })
 
-describe('submissions 是不可變事件', () => {
+describe('模板填報 ACL', () => {
   before(async () => {
     await testEnv.clearFirestore()
-    await seed('submissions/s1', submission({ _submitterEmail: OTHER }))
+    await seed('templates/tpl_open', openTemplate())
+    await seed(
+      'templates/tpl_group',
+      openTemplate({
+        name: '群組表',
+        fillAccessType: 'groups',
+        fillGroups: ['SCD Manager'],
+      })
+    )
+    await seed('templates/tpl_disabled', openTemplate({ enabled: false }))
+    await seed(`userRoles/${MANAGER}`, { groups: ['SCD Manager'] })
   })
 
-  it('一般使用者可以新增自己的', async () => {
-    await assertSucceeds(setDoc(doc(otherDb(), 'submissions/new1'), submission({ _submitterEmail: OTHER })))
+  it('全組織表：任何組織使用者可讀', async () => {
+    await assertSucceeds(getDoc(doc(auth(OTHER), 'templates/tpl_open')))
   })
 
-  it('一般使用者不能冒用別人的 email 送出', async () => {
-    await assertFails(
-      setDoc(doc(otherDb(), 'submissions/new2'), submission({ _submitterEmail: OWNER }))
+  it('群組表：無角色者不可讀', async () => {
+    await assertFails(getDoc(doc(auth(OTHER), 'templates/tpl_group')))
+  })
+
+  it('群組表：有對應群組可讀', async () => {
+    await assertSucceeds(getDoc(doc(auth(MANAGER), 'templates/tpl_group')))
+  })
+
+  it('停用表：一般使用者不可讀', async () => {
+    await assertFails(getDoc(doc(auth(OTHER), 'templates/tpl_disabled')))
+  })
+
+  it('缺少 userRoles 時 Manager ACL 不崩潰且拒絕', async () => {
+    await seed(
+      'templates/tpl_mgr',
+      openTemplate({ managerGroups: ['SCD Manager'], fillAccessType: 'allOrgUsers' })
+    )
+    await seed(
+      'submissions/sub_mgr',
+      submission({
+        _templateId: 'tpl_mgr',
+        _submitterUid: 'joeshi_dbyv_org',
+        _submitterEmail: SUPER,
+        _actorUid: 'joeshi_dbyv_org',
+        _actorEmail: SUPER,
+      })
+    )
+    // OTHER 不是擁有者、也沒有 userRoles → 不可讀
+    await assertFails(getDoc(doc(auth(OTHER), 'submissions/sub_mgr')))
+  })
+})
+
+describe('Manager 可讀不可改鏈', () => {
+  before(async () => {
+    await testEnv.clearFirestore()
+    await seed(`userRoles/${MANAGER}`, { groups: ['SCD Manager'] })
+    await seed(
+      'templates/t_managed',
+      openTemplate({ managerGroups: ['SCD Manager'] })
+    )
+    await seed(
+      'templates/t_other',
+      openTemplate({ managerGroups: ['HR Manager'] })
+    )
+    await seed(
+      'submissions/sub_managed',
+      submission({
+        _templateId: 't_managed',
+        _submitterUid: 'someone_dbyv_org',
+        _submitterEmail: OTHER,
+      })
+    )
+    await seed(
+      'submissions/sub_other',
+      submission({
+        _templateId: 't_other',
+        _submitterUid: 'someone_dbyv_org',
+        _submitterEmail: OTHER,
+      })
     )
   })
 
-  it('不能新增一筆一開始就不是鏈頭的紀錄', async () => {
+  it('Manager 可讀所管表格 submission', async () => {
+    await assertSucceeds(getDoc(doc(auth(MANAGER), 'submissions/sub_managed')))
+  })
+
+  it('Manager 不可讀未管表格', async () => {
+    await assertFails(getDoc(doc(auth(MANAGER), 'submissions/sub_other')))
+  })
+
+  it('Manager 不可交棒他人鏈頭', async () => {
     await assertFails(
-      setDoc(doc(otherDb(), 'submissions/new3'), submission({ _submitterEmail: OTHER, _isLatest: false }))
+      updateDoc(doc(auth(MANAGER), 'submissions/sub_managed'), {
+        _isLatest: false,
+        _supersededBy: 'x',
+      })
     )
   })
 
-  it('不能改欄位資料', async () => {
-    await assertFails(updateDoc(doc(otherDb(), 'submissions/s1'), { quantity1: 999 }))
-  })
-
-  it('不能改狀態', async () => {
-    await assertFails(updateDoc(doc(otherDb(), 'submissions/s1'), { _status: 'VOID' }))
-  })
-
-  it('不能改 label 快照', async () => {
+  it('Manager 不可建立冒充他人的更正', async () => {
     await assertFails(
-      updateDoc(doc(otherDb(), 'submissions/s1'), { _fieldLabels: { quantity1: '換個說法' } })
+      setDoc(
+        doc(auth(MANAGER), 'submissions/fake_corr'),
+        submission({
+          _templateId: 't_managed',
+          _submitterUid: 'someone_dbyv_org',
+          _submitterEmail: OTHER,
+          _actorUid: 'manager_dbyv_org',
+          _actorEmail: MANAGER,
+          _eventKind: 'CORRECTION',
+          _supersedes: 'sub_managed',
+        })
+      )
+    )
+  })
+})
+
+describe('擁有者／操作者與不可變生命週期', () => {
+  before(async () => {
+    await testEnv.clearFirestore()
+    await seed('templates/tpl_open', openTemplate())
+    await seed(
+      'submissions/s1',
+      submission({
+        _submitterUid: 'someone_dbyv_org',
+        _submitterEmail: OTHER,
+        _actorUid: 'someone_dbyv_org',
+        _actorEmail: OTHER,
+      })
     )
   })
 
-  it('不能刪除', async () => {
-    await assertFails(deleteDoc(doc(otherDb(), 'submissions/s1')))
-  })
-
-  it('一般使用者可以把自己的鏈頭交棒給新紀錄', async () => {
+  it('一般使用者可建立自己的 ACTIVE CREATE', async () => {
     await assertSucceeds(
-      updateDoc(doc(otherDb(), 'submissions/s1'), { _isLatest: false, _supersededBy: 's2' })
+      setDoc(
+        doc(auth(OTHER), 'submissions/new1'),
+        submission({
+          _submitterUid: 'someone_dbyv_org',
+          _submitterEmail: OTHER,
+          _actorUid: 'someone_dbyv_org',
+          _actorEmail: OTHER,
+          _eventKind: 'CREATE',
+          _status: 'ACTIVE',
+        })
+      )
     )
   })
 
-  it('一般使用者不能交棒別人的紀錄', async () => {
-    await seed('submissions/s_owner', submission({ _submitterEmail: OWNER }))
+  it('一般使用者不能直接建立 VOID（無鏈）', async () => {
     await assertFails(
-      updateDoc(doc(otherDb(), 'submissions/s_owner'), { _isLatest: false, _supersededBy: 's2' })
+      setDoc(
+        doc(auth(OTHER), 'submissions/void_forge'),
+        submission({
+          _submitterUid: 'someone_dbyv_org',
+          _submitterEmail: OTHER,
+          _actorUid: 'someone_dbyv_org',
+          _actorEmail: OTHER,
+          _eventKind: 'VOID',
+          _status: 'VOID',
+        })
+      )
     )
   })
 
-  it('Superuser 可以交棒別人的紀錄', async () => {
-    await seed('submissions/s_other2', submission({ _submitterEmail: OTHER }))
+  it('一般使用者不能冒用別人 email/uid', async () => {
+    await assertFails(
+      setDoc(
+        doc(auth(OTHER), 'submissions/steal'),
+        submission({
+          _submitterUid: 'joeshi_dbyv_org',
+          _submitterEmail: SUPER,
+          _actorUid: 'someone_dbyv_org',
+          _actorEmail: OTHER,
+        })
+      )
+    )
+  })
+
+  it('擁有者可建立 CORRECTION 並保留擁有者', async () => {
     await assertSucceeds(
-      updateDoc(doc(ownerDb(), 'submissions/s_other2'), { _isLatest: false, _supersededBy: 's2' })
+      setDoc(
+        doc(auth(OTHER), 'submissions/corr1'),
+        submission({
+          _submitterUid: 'someone_dbyv_org',
+          _submitterEmail: OTHER,
+          _actorUid: 'someone_dbyv_org',
+          _actorEmail: OTHER,
+          _eventKind: 'CORRECTION',
+          _status: 'ACTIVE',
+          _supersedes: 's1',
+        })
+      )
     )
   })
 
-  it('交棒之後不能再把鏈頭搶回來', async () => {
-    await assertFails(updateDoc(doc(otherDb(), 'submissions/s1'), { _isLatest: true }))
+  it('Superuser 代為更正時保留原擁有者', async () => {
+    await seed(
+      'submissions/s_owner',
+      submission({
+        _submitterUid: 'someone_dbyv_org',
+        _submitterEmail: OTHER,
+        _actorUid: 'someone_dbyv_org',
+        _actorEmail: OTHER,
+      })
+    )
+    await assertSucceeds(
+      setDoc(
+        doc(auth(SUPER), 'submissions/corr_su'),
+        submission({
+          _submitterUid: 'someone_dbyv_org',
+          _submitterEmail: OTHER,
+          _actorUid: 'joeshi_dbyv_org',
+          _actorEmail: SUPER,
+          _eventKind: 'CORRECTION',
+          _status: 'ACTIVE',
+          _supersedes: 's_owner',
+        })
+      )
+    )
   })
 
-  it('不能只動指標卻偷改資料', async () => {
-    await seed('submissions/s3', submission({ _submitterEmail: OTHER }))
-    await assertFails(
-      updateDoc(doc(otherDb(), 'submissions/s3'), {
+  it('不能改欄位資料，只能交棒指標', async () => {
+    await seed(
+      'submissions/s3',
+      submission({
+        _submitterUid: 'someone_dbyv_org',
+        _submitterEmail: OTHER,
+      })
+    )
+    await assertFails(updateDoc(doc(auth(OTHER), 'submissions/s3'), { quantity1: 999 }))
+    await assertSucceeds(
+      updateDoc(doc(auth(OTHER), 'submissions/s3'), {
         _isLatest: false,
         _supersededBy: 's4',
-        quantity1: 999,
+      })
+    )
+  })
+
+  it('不能刪除 submission', async () => {
+    await seed(
+      'submissions/s_del',
+      submission({
+        _submitterUid: 'someone_dbyv_org',
+        _submitterEmail: OTHER,
+      })
+    )
+    await assertFails(deleteDoc(doc(auth(OTHER), 'submissions/s_del')))
+    await assertFails(deleteDoc(doc(auth(SUPER), 'submissions/s_del')))
+  })
+})
+
+describe('uploadSessions', () => {
+  before(() => testEnv.clearFirestore())
+
+  it('使用者只能建立自己的 session', async () => {
+    const expiresAt = new Date(Date.now() + 3600_000)
+    await assertSucceeds(
+      setDoc(doc(auth(OTHER), 'uploadSessions/draft1'), {
+        uid: 'someone_dbyv_org',
+        email: OTHER,
+        submissionId: 'draft1',
+        expiresAt,
+      })
+    )
+    await assertFails(
+      setDoc(doc(auth(OTHER), 'uploadSessions/draft2'), {
+        uid: 'joeshi_dbyv_org',
+        email: SUPER,
+        submissionId: 'draft2',
+        expiresAt,
       })
     )
   })
 })
 
+// 修正外網域測試：auth() 回傳的就是 firestore
+describe('外網域拒絕（修正）', () => {
+  before(async () => {
+    await testEnv.clearFirestore()
+    await seed('optionSets/o1', { code: 'school' })
+  })
+
+  it('gmail 帳號無法讀 optionSets', async () => {
+    await assertFails(getDoc(doc(auth(OUTSIDER), 'optionSets/o1')))
+  })
+})

@@ -3,100 +3,238 @@ rules_version = '2';
 // ============================================
 // 🦄 UNICORN Capture — Firestore 安全規則
 //
-// 支援多使用者 (Multi-User RBAC)：
-// - Superuser: 可以管理選項池、建表、看所有人的 submission。
-// - 一般使用者 (Submitter): 只能讀取表格來填寫，並且只能看/改「自己填的」submission。
+// 身分邊界：已驗證的 @dbyv.org
+// 角色：
+//   Superuser — 管理選項池／建表／看全部／代為更正作廢（不改擁有者）
+//   Manager   — 讀取所管表格的全部 submission（不可更正／作廢他人）
+//   Submitter — 填授權表格、讀自己的 submission、更正／作廢自己的鏈
 //
-// submissions 依然維持不可變：
-// 更正 / 作廢一律是「再寫一筆新的」，舊紀錄只允許翻動
-// _isLatest / _supersededBy 這兩個鏈頭指標。
+// submissions 不可變：更正／作廢 = 新文件；舊文件只允許交棒指標。
 // ============================================
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function authEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function isOrgUser() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.matches('.*@dbyv\\.org$');
+    }
+
     function isSuperuser() {
-      return request.auth != null && (
-        request.auth.token.email.lower() == 'joeshi@dbyv.org'
-        // Add other superusers here if needed
+      return isOrgUser() && (
+        authEmail() == 'joeshi@dbyv.org'
       );
     }
 
-    function isOwnerOfRecord() {
-      return request.auth != null && 
-             resource.data._submitterEmail.lower() == request.auth.token.email.lower();
+    function roleDocPath() {
+      return /databases/$(database)/documents/userRoles/$(authEmail());
     }
 
-    function isCreatingOwnRecord() {
-      return request.auth != null && 
-             request.resource.data._submitterEmail.lower() == request.auth.token.email.lower();
+    function hasRoleDoc() {
+      return isOrgUser() && exists(roleDocPath());
     }
 
-    // ============================================
-    // RBAC: Form Managers Access Control
-    // ============================================
-
-    // 1. Define who can manage users
-    match /userRoles/{email} {
-      // Users can read their own roles; Superusers can read/write all
-      allow read: if isSuperuser() || request.auth.token.email.lower() == email;
-      allow write: if isSuperuser();
-    }
-
-    // 2. The core ACL logic
     function getMyGroups() {
-      // Get the groups array from the userRoles document for the logged-in user
-      let roleDoc = get(/databases/$(database)/documents/userRoles/$(request.auth.token.email.lower()));
-      return roleDoc == null ? [] : roleDoc.data.groups;
+      return hasRoleDoc() ? get(roleDocPath()).data.groups : [];
+    }
+
+    function isListOfStrings(value) {
+      return value is list;
+    }
+
+    function templatePath(templateId) {
+      return /databases/$(database)/documents/templates/$(templateId);
+    }
+
+    function templateExists(templateId) {
+      return exists(templatePath(templateId));
+    }
+
+    function getTemplate(templateId) {
+      return get(templatePath(templateId)).data;
     }
 
     function isManagerOfForm(templateId) {
-      // Get the managerGroups array from the specific Template document
-      let templateDoc = get(/databases/$(database)/documents/templates/$(templateId));
-      let requiredGroups = templateDoc == null ? [] : templateDoc.data.managerGroups;
-      
-      // If the template has no managerGroups, it's Superuser/Submitter only.
-      // Otherwise, check if the user's groups intersect with the template's required groups.
-      return requiredGroups != null && getMyGroups().hasAny(requiredGroups);
+      return templateExists(templateId)
+        && getTemplate(templateId).keys().hasAny(['managerGroups'])
+        && isListOfStrings(getTemplate(templateId).managerGroups)
+        && getTemplate(templateId).managerGroups.size() > 0
+        && hasRoleDoc()
+        && isListOfStrings(getMyGroups())
+        && getMyGroups().hasAny(getTemplate(templateId).managerGroups);
     }
 
-    // 選項池：Meaning Layer
-    // 只有 Superuser 可以看跟改
-    match /optionSets/{optionSetId} {
-      allow read, write: if isSuperuser();
+    function canFillTemplateData(data) {
+      return data.enabled == true && (
+        !data.keys().hasAny(['fillAccessType'])
+        || data.fillAccessType == 'allOrgUsers'
+        || (
+          data.fillAccessType == 'groups'
+          && data.keys().hasAny(['fillGroups'])
+          && isListOfStrings(data.fillGroups)
+          && data.fillGroups.size() > 0
+          && hasRoleDoc()
+          && isListOfStrings(getMyGroups())
+          && getMyGroups().hasAny(data.fillGroups)
+        )
+      );
     }
 
-    // 表格定義：Template Layer（純資料）
-    // 所有登入使用者都可以讀取（為了填表），但只有 Superuser 可以建表/改表
-    match /templates/{templateId} {
-      allow read: if request.auth != null;
+    function canFillTemplate(templateId) {
+      return templateExists(templateId) && canFillTemplateData(getTemplate(templateId));
+    }
+
+    function isOwnerOfRecord() {
+      return isOrgUser()
+        && resource.data.keys().hasAll(['_submitterUid'])
+        && resource.data._submitterUid == request.auth.uid;
+    }
+
+    function submissionPath(id) {
+      return /databases/$(database)/documents/submissions/$(id);
+    }
+
+    function chainParent() {
+      return get(submissionPath(request.resource.data._supersedes)).data;
+    }
+
+    function hasValidChainParent() {
+      return request.resource.data.keys().hasAny(['_supersedes'])
+        && request.resource.data._supersedes is string
+        && exists(submissionPath(request.resource.data._supersedes))
+        && chainParent()._isLatest == true
+        && chainParent()._submitterUid == request.resource.data._submitterUid
+        && chainParent()._submitterEmail.lower() == request.resource.data._submitterEmail.lower();
+    }
+
+    function actorIsSelf() {
+      return request.resource.data._actorUid == request.auth.uid
+        && request.resource.data._actorEmail.lower() == authEmail();
+    }
+
+    function ownerIsSelf() {
+      return request.resource.data._submitterUid == request.auth.uid
+        && request.resource.data._submitterEmail.lower() == authEmail();
+    }
+
+    function requiredCreateFields() {
+      return request.resource.data.keys().hasAll([
+        '_templateId', '_templateVersion', '_submittedMonth',
+        '_isLatest', '_status', '_eventKind',
+        '_submitterUid', '_submitterEmail',
+        '_actorUid', '_actorEmail',
+        '_eventType', '_templateModule', '_templateAction'
+      ])
+        && request.resource.data._templateId is string
+        && request.resource.data._templateVersion is number
+        && request.resource.data._submittedMonth is string
+        && request.resource.data._isLatest == true
+        && request.resource.data._eventType is string
+        && actorIsSelf();
+    }
+
+    function isValidCreateEvent() {
+      return request.resource.data._eventKind == 'CREATE'
+        && request.resource.data._status == 'ACTIVE'
+        && ownerIsSelf()
+        && !request.resource.data.keys().hasAny(['_supersedes'])
+        && canFillTemplate(request.resource.data._templateId);
+    }
+
+    function isValidCorrectionEvent() {
+      return request.resource.data._eventKind == 'CORRECTION'
+        && request.resource.data._status == 'ACTIVE'
+        && hasValidChainParent()
+        && (
+          ownerIsSelf()
+          || (
+            isSuperuser()
+            && request.resource.data._submitterUid == chainParent()._submitterUid
+            && request.resource.data._submitterEmail.lower() == chainParent()._submitterEmail.lower()
+          )
+        );
+    }
+
+    function isValidVoidEvent() {
+      return request.resource.data._eventKind == 'VOID'
+        && request.resource.data._status == 'VOID'
+        && hasValidChainParent()
+        && (
+          ownerIsSelf()
+          || (
+            isSuperuser()
+            && request.resource.data._submitterUid == chainParent()._submitterUid
+            && request.resource.data._submitterEmail.lower() == chainParent()._submitterEmail.lower()
+          )
+        );
+    }
+
+    // ---------- userRoles ----------
+    match /userRoles/{email} {
+      allow read: if isSuperuser() || (isOrgUser() && authEmail() == email);
       allow write: if isSuperuser();
     }
 
-    // 單一資料池：Submission Layer（不可變事件）
+    // ---------- optionSets：組織可讀，Superuser 可寫 ----------
+    match /optionSets/{optionSetId} {
+      allow read: if isOrgUser();
+      allow write: if isSuperuser();
+    }
+
+    // ---------- templates ----------
+    match /templates/{templateId} {
+      allow read: if isSuperuser()
+        || (isOrgUser() && canFillTemplateData(resource.data))
+        || (isOrgUser() && isManagerOfForm(templateId));
+      allow write: if isSuperuser();
+    }
+
+    // ---------- uploadSessions：送出前暫存擁有權 ----------
+    match /uploadSessions/{sessionId} {
+      allow read: if isOrgUser()
+        && (isSuperuser() || resource.data.uid == request.auth.uid);
+      allow create: if isOrgUser()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email.lower() == authEmail()
+        && request.resource.data.submissionId == sessionId
+        && request.resource.data.expiresAt is timestamp;
+      allow update: if isOrgUser()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.submissionId == resource.data.submissionId;
+      allow delete: if isOrgUser()
+        && (isSuperuser() || resource.data.uid == request.auth.uid);
+    }
+
+    // ---------- submissions ----------
     match /submissions/{submissionId} {
-      // 讀取：
-      // - Superuser 看全部
-      // - 一般人看自己填的
-      // - Manager 可以看自己管的表格的所有資料
-      allow read: if isSuperuser() || isOwnerOfRecord() || isManagerOfForm(resource.data._templateId);
+      allow read: if isSuperuser()
+        || isOwnerOfRecord()
+        || isManagerOfForm(resource.data._templateId);
 
-      // 新增：任何登入者都可以新增，但 _submitterEmail 必須是自己
-      allow create: if isCreatingOwnRecord()
-                    && request.resource.data._templateId is string
-                    && request.resource.data._templateVersion is number
-                    && request.resource.data._submittedMonth is string
-                    && request.resource.data._isLatest == true
-                    && request.resource.data._status in ['ACTIVE', 'VOID'];
+      allow create: if isOrgUser()
+        && requiredCreateFields()
+        && (
+          isValidCreateEvent()
+          || isValidCorrectionEvent()
+          || isValidVoidEvent()
+        );
 
-      // 更新：Superuser 可以更新任何人的指標，一般人只能更新自己的指標。
-      // 依然只允許把鏈頭指標交棒給更正 / 作廢後的新紀錄
       allow update: if (isSuperuser() || isOwnerOfRecord())
-                    && request.resource.data.diff(resource.data)
-                         .affectedKeys().hasOnly(['_isLatest', '_supersededBy'])
-                    && resource.data._isLatest == true
-                    && request.resource.data._isLatest == false
-                    && request.resource.data._supersededBy is string;
+        && request.resource.data.diff(resource.data)
+             .affectedKeys().hasOnly(['_isLatest', '_supersededBy'])
+        && resource.data._isLatest == true
+        && request.resource.data._isLatest == false
+        && request.resource.data._supersededBy is string;
 
       allow delete: if false;
     }

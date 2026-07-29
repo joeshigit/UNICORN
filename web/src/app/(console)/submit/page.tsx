@@ -8,11 +8,14 @@ import { useAuth } from '@/components/auth'
 import { FieldInput } from '@/components/form'
 import { EmptyState, ErrorBanner, PageHeader, Spinner } from '@/components/ui'
 import {
+  canUserFillTemplate,
   createSubmission,
   correctSubmission,
+  ensureUploadSession,
   getOptionSet,
   getSubmission,
   getTemplate,
+  getUserRole,
   newSubmissionId,
 } from '@/lib/db'
 import type { FileInfo, OptionItem, Submission, Template } from '@/types'
@@ -20,7 +23,7 @@ import type { FileInfo, OptionItem, Submission, Template } from '@/types'
 function SubmitForm() {
   const router = useRouter()
   const params = useSearchParams()
-  const { email } = useAuth()
+  const { email, uid, isSuperuser } = useAuth()
 
   const templateId = params.get('form') || ''
   const correctId = params.get('correct') || ''
@@ -36,12 +39,35 @@ function SubmitForm() {
   const [savedId, setSavedId] = useState('')
   const [draftId, setDraftId] = useState(() => newSubmissionId())
 
+  const actor = useMemo(() => ({ uid, email }), [uid, email])
+
   const load = useCallback(async () => {
     setLoading(true)
     setLoadError('')
     try {
+      if (!uid || !email) throw new Error('請先登入')
+
       const found = await getTemplate(templateId)
       if (!found) throw new Error('找不到這張表格')
+
+      const role = await getUserRole(email)
+      const groups = role?.groups || []
+
+      let source: Submission | null = null
+      if (correctId) {
+        source = await getSubmission(correctId)
+        if (!source) throw new Error('找不到要更正的紀錄')
+        if (source._isLatest !== true) throw new Error('這筆紀錄已經有更新的版本了')
+        const isOwner =
+          source._submitterUid === uid ||
+          source._submitterEmail?.toLowerCase() === email.toLowerCase()
+        if (!isOwner && !isSuperuser) {
+          throw new Error('只有擁有者或 Superuser 可以更正此紀錄')
+        }
+      } else if (!canUserFillTemplate(found, groups, isSuperuser)) {
+        throw new Error('這張表格已停用，或你沒有填報權限')
+      }
+
       setTemplate(found)
 
       const setIds = Array.from(
@@ -56,18 +82,12 @@ function SubmitForm() {
       )
       setOptionsBySet(loaded)
 
-      let source: Submission | null = null
-      if (correctId) {
-        source = await getSubmission(correctId)
-        if (!source) throw new Error('找不到要更正的紀錄')
-        if (source._isLatest !== true) throw new Error('這筆紀錄已經有更新的版本了')
-      }
+      await ensureUploadSession(draftId, { uid, email })
 
       const initial: Record<string, unknown> = {}
       for (const field of found.fields) {
         const previous = source?.[field.key]
         if (previous !== undefined) {
-          // 下拉一律存成陣列，但單選的輸入元件要的是單一值
           if (field.type === 'dropdown' && !field.multiple) {
             initial[field.key] = Array.isArray(previous) ? (previous[0] ?? '') : previous
           } else if (field.type === 'dropdown' && field.multiple) {
@@ -93,7 +113,7 @@ function SubmitForm() {
     } finally {
       setLoading(false)
     }
-  }, [templateId, correctId])
+  }, [templateId, correctId, uid, email, isSuperuser, draftId])
 
   useEffect(() => {
     if (!templateId) {
@@ -101,8 +121,8 @@ function SubmitForm() {
       setLoading(false)
       return
     }
-    load()
-  }, [templateId, load])
+    if (uid && email) load()
+  }, [templateId, load, uid, email])
 
   const sortedFields = useMemo(
     () => (template ? [...template.fields].sort((a, b) => a.order - b.order) : []),
@@ -135,7 +155,6 @@ function SubmitForm() {
     setSaving(true)
     setSubmitError('')
     try {
-      // 寫入當下就把顯示用的文字凍結起來，之後改選項池也不會動到歷史資料
       const optionLabels: Record<string, string> = {}
       const optionOrder: Record<string, string[]> = {}
       const files: FileInfo[] = []
@@ -155,12 +174,10 @@ function SubmitForm() {
 
         if (field.type === 'dropdown' && field.optionSetId) {
           const items = optionsBySet[field.optionSetId] || []
-          // 交給 db 層決定標準順序，這裡只提供選項池的排序依據
           optionOrder[field.key] = items.map(i => i.value)
 
           const picked = Array.isArray(value) ? (value as string[]) : value ? [value as string] : []
           if (picked.length > 0) {
-            // 顯示用的標籤也照同一個順序，才不會跟組合字串對不起來
             optionLabels[field.key] = items
               .filter(i => picked.includes(i.value))
               .map(i => i.label)
@@ -171,8 +188,8 @@ function SubmitForm() {
 
       const input = { template, values: payload, files, optionLabels, optionOrder }
       const id = correctId
-        ? await correctSubmission(correctId, input, email, draftId)
-        : await createSubmission(input, email, draftId)
+        ? await correctSubmission(correctId, input, actor, draftId)
+        : await createSubmission(input, actor, draftId)
 
       setSavedId(id)
     } catch (err) {
@@ -186,7 +203,6 @@ function SubmitForm() {
     setSavedId('')
     setDraftId(newSubmissionId())
     router.replace(`/submit?form=${templateId}`)
-    load()
   }
 
   if (loading) return <Spinner label="載入表格中" />
@@ -240,7 +256,7 @@ function SubmitForm() {
 
       {correctId && (
         <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          更正模式：送出後會建立一筆新紀錄，原紀錄保留不動，只會標記為已被更正。
+          更正模式：送出後會建立一筆新紀錄，原擁有者不變；原紀錄保留不動，只會標記為已被更正。
         </div>
       )}
 
@@ -263,7 +279,7 @@ function SubmitForm() {
                 options={field.optionSetId ? optionsBySet[field.optionSetId] || [] : []}
                 error={errors[field.key]}
                 submissionId={draftId}
-                userEmail={email}
+                actor={actor}
               />
               {errors[field.key] ? (
                 <p className="mt-1 text-sm text-red-600">{errors[field.key]}</p>

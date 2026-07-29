@@ -1,16 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Ban, Paperclip, Pencil, X } from 'lucide-react'
 import { StatusChip } from '@/components/ui'
 import { voidSubmission, toDate } from '@/lib/db'
-import { formatFileSize } from '@/lib/storage'
-import type { Submission } from '@/types'
+import type { Actor } from '@/lib/db'
+import { createAuthorizedObjectUrl, formatFileSize } from '@/lib/storage'
+import type { FileInfo, Submission } from '@/types'
 
 interface SubmissionDetailProps {
   submission: Submission
-  userEmail: string
+  actor: Actor
+  isSuperuser: boolean
   onClose: () => void
   onChanged: () => void
 }
@@ -24,16 +26,65 @@ function renderValue(submission: Submission, key: string): string {
   return String(raw)
 }
 
+function AuthFileLink({ file }: { file: FileInfo }) {
+  const [busy, setBusy] = useState(false)
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [objectUrl])
+
+  const open = async () => {
+    setBusy(true)
+    try {
+      const url = await createAuthorizedObjectUrl(file.path)
+      setObjectUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev)
+        return url
+      })
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch {
+      alert('無法開啟檔案（可能沒有權限）')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={open}
+      disabled={busy}
+      className="flex w-full items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-60"
+    >
+      <Paperclip className="h-4 w-4 text-slate-400" />
+      <span className="min-w-0 flex-1 truncate text-unicorn-700">
+        {busy ? '開啟中…' : file.name}
+      </span>
+      <span className="hint">{formatFileSize(file.size)}</span>
+    </button>
+  )
+}
+
 export function SubmissionDetail({
   submission,
-  userEmail,
+  actor,
+  isSuperuser,
   onClose,
   onChanged,
 }: SubmissionDetailProps) {
   const [working, setWorking] = useState(false)
   const [error, setError] = useState('')
 
-  const editable = submission._isLatest === true && submission._status === 'ACTIVE'
+  const isOwner =
+    !!actor.uid &&
+    (submission._submitterUid === actor.uid ||
+      submission._submitterEmail?.toLowerCase() === actor.email.toLowerCase())
+  const canMutateChain = isOwner || isSuperuser
+  const editable =
+    canMutateChain && submission._isLatest === true && submission._status === 'ACTIVE'
   const submittedAt = toDate(submission._submittedAt)
   const fileFieldKeys = new Set((submission.files || []).map(f => f.fieldKey))
 
@@ -42,7 +93,7 @@ export function SubmissionDetail({
     setWorking(true)
     setError('')
     try {
-      await voidSubmission(submission, userEmail)
+      await voidSubmission(submission, actor)
       onChanged()
     } catch (err) {
       setError(err instanceof Error ? err.message : '作廢失敗')
@@ -62,6 +113,7 @@ export function SubmissionDetail({
             <p className="hint mt-0.5">
               v{submission._templateVersion} · {submission._templateModule} ·{' '}
               {submission._templateAction}
+              {submission._eventType ? ` · ${submission._eventType}` : ''}
             </p>
           </div>
           <button className="btn-ghost btn-sm" onClick={onClose}>
@@ -72,10 +124,20 @@ export function SubmissionDetail({
         <div className="space-y-6 px-6 py-5">
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
             <StatusChip status={submission._status} />
+            {submission._eventKind && (
+              <span className="chip bg-slate-100 text-slate-600">{submission._eventKind}</span>
+            )}
             {!submission._isLatest && (
               <span className="chip bg-amber-50 text-amber-700">已被更正</span>
             )}
             <span>{submittedAt ? submittedAt.toLocaleString('zh-TW') : ''}</span>
+          </div>
+
+          <div className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-500">
+            <p>擁有者：{submission._submitterEmail}</p>
+            {submission._actorEmail && submission._actorEmail !== submission._submitterEmail && (
+              <p>操作者：{submission._actorEmail}</p>
+            )}
           </div>
 
           <dl className="divide-y divide-slate-100 rounded-xl border border-slate-200">
@@ -101,17 +163,7 @@ export function SubmissionDetail({
               <h3 className="mb-2 text-sm font-medium text-slate-600">檔案</h3>
               <div className="space-y-2">
                 {submission.files.map(file => (
-                  <a
-                    key={file.path}
-                    href={file.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
-                  >
-                    <Paperclip className="h-4 w-4 text-slate-400" />
-                    <span className="min-w-0 flex-1 truncate text-unicorn-700">{file.name}</span>
-                    <span className="hint">{formatFileSize(file.size)}</span>
-                  </a>
+                  <AuthFileLink key={file.path} file={file} />
                 ))}
               </div>
             </div>

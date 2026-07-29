@@ -1,8 +1,14 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Paperclip, Upload, X } from 'lucide-react'
-import { formatFileSize, removeFile, uploadFile } from '@/lib/storage'
+import {
+  createAuthorizedObjectUrl,
+  formatFileSize,
+  removeFile,
+  uploadFile,
+} from '@/lib/storage'
+import type { Actor } from '@/lib/db'
 import type { FileInfo } from '@/types'
 
 interface FileUploaderProps {
@@ -10,9 +16,48 @@ interface FileUploaderProps {
   onChange: (files: FileInfo[]) => void
   fieldKey: string
   submissionId: string
-  userEmail: string
+  actor: Actor
   error?: boolean
   maxFiles?: number
+}
+
+function FileLink({ file }: { file: FileInfo }) {
+  const [href, setHref] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    return () => {
+      if (href) URL.revokeObjectURL(href)
+    }
+  }, [href])
+
+  const open = async () => {
+    if (href) {
+      window.open(href, '_blank', 'noopener,noreferrer')
+      return
+    }
+    setBusy(true)
+    try {
+      const url = await createAuthorizedObjectUrl(file.path)
+      setHref(url)
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch {
+      alert('無法開啟檔案（可能沒有權限）')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={open}
+      disabled={busy}
+      className="min-w-0 flex-1 truncate text-left text-sm text-unicorn-700 hover:underline disabled:opacity-60"
+    >
+      {busy ? '開啟中…' : file.name}
+    </button>
+  )
 }
 
 export function FileUploader({
@@ -20,7 +65,7 @@ export function FileUploader({
   onChange,
   fieldKey,
   submissionId,
-  userEmail,
+  actor,
   error,
   maxFiles = 10,
 }: FileUploaderProps) {
@@ -41,7 +86,7 @@ export function FileUploader({
     try {
       const uploaded: FileInfo[] = []
       for (const file of selected) {
-        uploaded.push(await uploadFile(file, fieldKey, submissionId, userEmail))
+        uploaded.push(await uploadFile(file, fieldKey, submissionId, actor))
       }
       onChange([...value, ...uploaded])
     } catch (err) {
@@ -66,14 +111,7 @@ export function FileUploader({
           className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2"
         >
           <Paperclip className="h-4 w-4 shrink-0 text-slate-400" />
-          <a
-            href={file.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="min-w-0 flex-1 truncate text-sm text-unicorn-700 hover:underline"
-          >
-            {file.name}
-          </a>
+          <FileLink file={file} />
           <span className="hint shrink-0">{formatFileSize(file.size)}</span>
           <button
             type="button"

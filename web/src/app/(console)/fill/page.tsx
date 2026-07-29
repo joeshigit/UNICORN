@@ -3,22 +3,32 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Search } from 'lucide-react'
-import { listTemplates } from '@/lib/db'
+import { useAuth } from '@/components/auth'
+import { canUserFillTemplate, getUserRole, listTemplates } from '@/lib/db'
 import { EmptyState, ErrorBanner, PageHeader, Spinner } from '@/components/ui'
 import type { Template } from '@/types'
 
 export default function FillCenterPage() {
+  const { email, isSuperuser } = useAuth()
   const [templates, setTemplates] = useState<Template[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [keyword, setKeyword] = useState('')
 
   useEffect(() => {
-    listTemplates()
-      .then(all => setTemplates(all.filter(t => t.enabled)))
-      .catch(err => setError(err instanceof Error ? err.message : '載入失敗'))
-      .finally(() => setLoading(false))
-  }, [])
+    const boot = async () => {
+      try {
+        const [all, role] = await Promise.all([listTemplates(), getUserRole(email)])
+        const groups = role?.groups || []
+        setTemplates(all.filter(t => canUserFillTemplate(t, groups, isSuperuser)))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '載入失敗')
+      } finally {
+        setLoading(false)
+      }
+    }
+    if (email) boot()
+  }, [email, isSuperuser])
 
   const groups = useMemo(() => {
     const kw = keyword.trim().toLowerCase()
@@ -41,7 +51,7 @@ export default function FillCenterPage() {
 
   return (
     <>
-      <PageHeader title="填報" description="選一張表格開始填寫" />
+      <PageHeader title="填報" description="選一張有權限填寫的表格開始" />
 
       {error && <ErrorBanner message={error} />}
 
@@ -49,12 +59,18 @@ export default function FillCenterPage() {
         <Spinner label="載入表格中" />
       ) : templates.length === 0 ? (
         <EmptyState
-          title="還沒有啟用中的表格"
-          description="先到「表格」建立一張表，發佈後就會出現在這裡。"
+          title="目前沒有可填的表格"
+          description={
+            isSuperuser
+              ? '先到「表格」建立一張表並啟用。'
+              : '請聯絡 Superuser 開通填報權限或啟用表格。'
+          }
           action={
-            <Link href="/forms/edit" className="btn-primary">
-              建立第一張表格
-            </Link>
+            isSuperuser ? (
+              <Link href="/forms/edit" className="btn-primary">
+                建立第一張表格
+              </Link>
+            ) : undefined
           }
         />
       ) : (

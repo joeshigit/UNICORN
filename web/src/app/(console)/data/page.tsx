@@ -7,8 +7,15 @@ import { Download, Filter, RefreshCw } from 'lucide-react'
 import { useAuth } from '@/components/auth'
 import { EmptyState, ErrorBanner, PageHeader, Spinner, StatusChip } from '@/components/ui'
 import { SubmissionDetail } from '@/components/SubmissionDetail'
-import { listOptionSets, listTemplates, querySubmissions, recentMonths, toDate } from '@/lib/db'
-import { combinedKey, countKey } from '@/lib/keys'
+import {
+  exportAllSubmissions,
+  listOptionSets,
+  listTemplates,
+  querySubmissions,
+  recentMonths,
+  toDate,
+} from '@/lib/db'
+import { ACTION_CODE, MODULE_CODE, NON_SUBMISSION_QUERY_CODES, combinedKey, countKey } from '@/lib/keys'
 import { downloadCsv, toCsv } from '@/lib/csv'
 import type { OptionSet, Submission, SubmissionStatus, Template } from '@/types'
 
@@ -30,18 +37,22 @@ function formatSubmittedAt(submission: Submission): string {
 
 function DataPool() {
   const params = useSearchParams()
-  const { email, isSuperuser } = useAuth()
+  const { email, uid, isSuperuser } = useAuth()
 
   const [templates, setTemplates] = useState<Template[]>([])
   const [optionSets, setOptionSets] = useState<OptionSet[]>([])
   const [rows, setRows] = useState<Submission[]>([])
+  const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
   const [selected, setSelected] = useState<Submission | null>(null)
 
   const [templateId, setTemplateId] = useState(params.get('form') || '')
   const [month, setMonth] = useState('')
   const [status, setStatus] = useState<SubmissionStatus | 'ALL'>('ACTIVE')
+  const [moduleFilter, setModuleFilter] = useState('')
+  const [actionFilter, setActionFilter] = useState('')
   const [fieldKey, setFieldKey] = useState('')
   const [fieldValue, setFieldValue] = useState('')
   const [includeSuperseded, setIncludeSuperseded] = useState(false)
@@ -56,30 +67,33 @@ function DataPool() {
       .catch(err => setError(err instanceof Error ? err.message : '載入失敗'))
   }, [])
 
+  const queryInput = useMemo(
+    () => ({
+      templateId: templateId || undefined,
+      month: month || undefined,
+      status,
+      includeSuperseded,
+      module: moduleFilter || undefined,
+      action: actionFilter || undefined,
+      fieldKey: fieldKey || undefined,
+      fieldValue: fieldKey && fieldValue ? fieldValue : undefined,
+    }),
+    [templateId, month, status, includeSuperseded, moduleFilter, actionFilter, fieldKey, fieldValue]
+  )
+
   const runQuery = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      setRows(
-        await querySubmissions(
-          {
-            templateId: templateId || undefined,
-            month: month || undefined,
-            status,
-            includeSuperseded,
-            fieldKey: fieldKey || undefined,
-            fieldValue: fieldKey && fieldValue ? fieldValue : undefined,
-          },
-          email,
-          isSuperuser
-        )
-      )
+      const result = await querySubmissions(queryInput, email, isSuperuser)
+      setRows(result.rows)
+      setTruncated(result.truncated)
     } catch (err) {
       setError(err instanceof Error ? err.message : '查詢失敗')
     } finally {
       setLoading(false)
     }
-  }, [templateId, month, status, fieldKey, fieldValue, includeSuperseded, email, isSuperuser])
+  }, [queryInput, email, isSuperuser])
 
   useEffect(() => {
     runQuery()
@@ -87,10 +101,21 @@ function DataPool() {
 
   const activeTemplate = templates.find(t => t.id === templateId) || null
 
-  // 跨表查詢的 KEY 來自選項池 code：同一個 KEY 在所有表格代表同一件事
+  const moduleChoices = useMemo(() => {
+    const master = optionSets.find(os => os.code === MODULE_CODE && os.isMaster)
+    return master?.items || []
+  }, [optionSets])
+
+  const actionChoices = useMemo(() => {
+    const master = optionSets.find(os => os.code === ACTION_CODE && os.isMaster)
+    return master?.items || []
+  }, [optionSets])
+
+  // 跨表 KEY：排除 module / action / managerGroup（它們是模板維度或 ACL）
   const keyChoices = useMemo(() => {
     const byCode = new Map<string, OptionSet[]>()
     for (const set of optionSets) {
+      if (NON_SUBMISSION_QUERY_CODES.includes(set.code)) continue
       byCode.set(set.code, [...(byCode.get(set.code) || []), set])
     }
     return Array.from(byCode.entries())
@@ -112,7 +137,6 @@ function DataPool() {
         .sort((a, b) => a.order - b.order)
         .map(f => ({ key: f.key, label: f.label }))
     }
-    // 混合多張表時，用出現過的 KEY 當欄位，LABEL 取第一次遇到的快照
     const seen = new Map<string, string>()
     for (const row of rows) {
       for (const key of row._fieldKeys || []) {
@@ -124,26 +148,41 @@ function DataPool() {
       .map(([key, label]) => ({ key, label }))
   }, [activeTemplate, rows])
 
-  // 下拉欄位才有 <key>Count，用它判斷哪些欄位帶得出衍生欄位
   const dropdownColumns = useMemo(
     () => columns.filter(c => rows.some(row => row[countKey(c.key)] !== undefined)),
     [columns, rows]
   )
 
-  const handleExport = () => {
-    const headers = ['提交時間', '表格', '版本', '狀態', ...columns.map(c => `${c.label} (${c.key})`)]
+  const buildCsv = (dataRows: Submission[]) => {
+    const headers = [
+      '提交時間',
+      '表格',
+      '版本',
+      'module',
+      'action',
+      'eventType',
+      '狀態',
+      '擁有者',
+      '操作者',
+      ...columns.map(c => `${c.label} (${c.key})`),
+    ]
     const extraColumns = withDerived ? dropdownColumns : []
     for (const column of extraColumns) {
       headers.push(`${column.label} 組合值 (${combinedKey(column.key)})`)
       headers.push(`${column.label} 數量 (${countKey(column.key)})`)
     }
 
-    const data = rows.map(row => {
+    const data = dataRows.map(row => {
       const cells: unknown[] = [
         formatSubmittedAt(row),
         row._templateName,
         `v${row._templateVersion}`,
+        row._templateModule,
+        row._templateAction,
+        row._eventType || '',
         row._status,
+        row._submitterEmail,
+        row._actorEmail || '',
         ...columns.map(c => displayValue(row, c.key)),
       ]
       for (const column of extraColumns) {
@@ -157,6 +196,23 @@ function DataPool() {
     downloadCsv(`${name}_${new Date().toISOString().slice(0, 10)}.csv`, toCsv(headers, data))
   }
 
+  const handleExport = async () => {
+    setExporting(true)
+    setError('')
+    try {
+      const all = truncated
+        ? await exportAllSubmissions(queryInput, email, isSuperuser)
+        : rows
+      buildCsv(all)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '匯出失敗')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const actor = useMemo(() => ({ uid, email }), [uid, email])
+
   return (
     <>
       <PageHeader
@@ -168,15 +224,24 @@ function DataPool() {
               <RefreshCw className="h-4 w-4" />
               重新查詢
             </button>
-            <button className="btn-primary" onClick={handleExport} disabled={rows.length === 0}>
+            <button
+              className="btn-primary"
+              onClick={handleExport}
+              disabled={rows.length === 0 || exporting}
+            >
               <Download className="h-4 w-4" />
-              匯出 CSV
+              {exporting ? '匯出中…' : truncated ? '完整匯出 CSV' : '匯出 CSV'}
             </button>
           </>
         }
       />
 
       {error && <ErrorBanner message={error} />}
+      {truncated && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          畫面只顯示前 {rows.length} 筆（已達上限）。請縮小篩選，或按「完整匯出 CSV」取得全部資料。
+        </div>
+      )}
 
       <div className="card mb-5 p-4">
         <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-600">
@@ -191,6 +256,38 @@ function DataPool() {
               {templates.map(t => (
                 <option key={t.id} value={t.id}>
                   {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="label mb-1">分類 module</label>
+            <select
+              className="field"
+              value={moduleFilter}
+              onChange={e => setModuleFilter(e.target.value)}
+            >
+              <option value="">全部</option>
+              {moduleChoices.map(item => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="label mb-1">動作 action</label>
+            <select
+              className="field"
+              value={actionFilter}
+              onChange={e => setActionFilter(e.target.value)}
+            >
+              <option value="">全部</option>
+              {actionChoices.map(item => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
                 </option>
               ))}
             </select>
@@ -341,7 +438,7 @@ function DataPool() {
             </table>
           </div>
           <div className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
-            共 {rows.length} 筆
+            共 {rows.length} 筆{truncated ? '（已截斷）' : ''}
           </div>
         </div>
       )}
@@ -349,7 +446,8 @@ function DataPool() {
       {selected && (
         <SubmissionDetail
           submission={selected}
-          userEmail={email}
+          actor={actor}
+          isSuperuser={isSuperuser}
           onClose={() => setSelected(null)}
           onChanged={() => {
             setSelected(null)

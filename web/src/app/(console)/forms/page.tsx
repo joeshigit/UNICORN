@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Copy, PenSquare, Plus, Trash2 } from 'lucide-react'
+import { SuperuserGuard } from '@/components/auth'
 import { EmptyState, ErrorBanner, PageHeader, Spinner } from '@/components/ui'
 import {
   countSubmissionsForTemplate,
@@ -12,7 +13,7 @@ import {
 } from '@/lib/db'
 import type { Template } from '@/types'
 
-export default function FormsPage() {
+function FormsPageInner() {
   const [templates, setTemplates] = useState<Template[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -134,5 +135,14 @@ export default function FormsPage() {
         </div>
       )}
     </>
+  )
+}
+
+
+export default function FormsPage() {
+  return (
+    <SuperuserGuard>
+      <FormsPageInner />
+    </SuperuserGuard>
   )
 }

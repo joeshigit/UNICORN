@@ -4,11 +4,11 @@ import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowDown, ArrowLeft, ArrowUp, Plus, Trash2 } from 'lucide-react'
-import { useAuth } from '@/components/auth'
+import { SuperuserGuard, useAuth } from '@/components/auth'
 import { ErrorBanner, PageHeader, Spinner } from '@/components/ui'
-import { createTemplate, getTemplate, listOptionSets, updateTemplate } from '@/lib/db'
+import { createTemplate, findLegacyDateKeyUsage, getTemplate, listOptionSets, updateTemplate } from '@/lib/db'
 import { ACTION_CODE, FIXED_KEYS, FIXED_KEY_GROUPS, MANAGER_GROUP_CODE, MODULE_CODE } from '@/lib/keys'
-import type { FieldDefinition, OptionSet, Template } from '@/types'
+import type { FieldDefinition, FillAccessType, OptionSet, Template } from '@/types'
 
 interface KeyChoice {
   key: string
@@ -37,7 +37,10 @@ function FormBuilder() {
   const [description, setDescription] = useState('')
   const [enabled, setEnabled] = useState(true)
   const [managerGroups, setManagerGroups] = useState<string[]>([])
+  const [fillAccessType, setFillAccessType] = useState<FillAccessType>('allOrgUsers')
+  const [fillGroups, setFillGroups] = useState<string[]>([])
   const [fields, setFields] = useState<FieldDefinition[]>([])
+  const [legacyWarning, setLegacyWarning] = useState('')
 
   useEffect(() => {
     const boot = async () => {
@@ -55,7 +58,15 @@ function FormBuilder() {
           setDescription(template.description || '')
           setEnabled(template.enabled)
           setManagerGroups(template.managerGroups || [])
+          setFillAccessType(template.fillAccessType || 'allOrgUsers')
+          setFillGroups(template.fillGroups || [])
           setFields(template.fields.map((f, i) => ({ ...f, order: i })))
+          const legacy = findLegacyDateKeyUsage([template])
+          if (legacy.length > 0) {
+            setLegacyWarning(
+              `此表格仍使用已退役日期 KEY（${legacy[0].keys.join(', ')}）。請改用語意化日期／時間 KEY 後再儲存。`
+            )
+          }
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : '載入失敗')
@@ -143,15 +154,31 @@ function FormBuilder() {
     if (fields.some(f => !f.label.trim())) list.push('每個欄位都要有顯示名稱')
     if (fields.some(f => f.type === 'dropdown' && !f.optionSetId)) list.push('下拉欄位要選一個選項池')
     if (new Set(fields.map(f => f.key)).size !== fields.length) list.push('同一個 KEY 只能用一次')
+    if (fillAccessType === 'groups' && fillGroups.length === 0) {
+      list.push('填報權限設為指定群組時，至少要選一個群組')
+    }
+    if (findLegacyDateKeyUsage([{ id: 'draft', name, fields } as Template]).length > 0) {
+      list.push('請移除已退役的日期 KEY，改用語意化日期／時間 KEY')
+    }
     return list
-  }, [name, moduleId, actionId, fields])
+  }, [name, moduleId, actionId, fields, fillAccessType, fillGroups])
 
   const handleSave = async () => {
     if (problems.length > 0) return
     setSaving(true)
     setError('')
     try {
-      const input = { name, moduleId, actionId, description, enabled, managerGroups, fields }
+      const input = {
+        name,
+        moduleId,
+        actionId,
+        description,
+        enabled,
+        managerGroups,
+        fillAccessType,
+        fillGroups,
+        fields,
+      }
       if (editId && source) {
         const fieldsChanged = JSON.stringify(source.fields) !== JSON.stringify(fields)
         await updateTemplate(editId, input, source.version, fieldsChanged)
@@ -186,6 +213,7 @@ function FormBuilder() {
       />
 
       {error && <ErrorBanner message={error} />}
+      {legacyWarning && <ErrorBanner message={legacyWarning} />}
 
       {needsSeed && (
         <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -259,11 +287,66 @@ function FormBuilder() {
 
         <section className="card space-y-4 p-6">
           <h2 className="font-semibold">權限設定</h2>
+
+          <div>
+            <label className="label mb-2">誰可以填這張表？</label>
+            <div className="space-y-2">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="fillAccessType"
+                  className="text-unicorn-600 focus:ring-unicorn-500"
+                  checked={fillAccessType === 'allOrgUsers'}
+                  onChange={() => setFillAccessType('allOrgUsers')}
+                />
+                所有 @dbyv.org 使用者
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="fillAccessType"
+                  className="text-unicorn-600 focus:ring-unicorn-500"
+                  checked={fillAccessType === 'groups'}
+                  onChange={() => setFillAccessType('groups')}
+                />
+                僅指定群組
+              </label>
+            </div>
+            {fillAccessType === 'groups' && (
+              <div className="mt-3 flex flex-wrap gap-4">
+                {managerGroupItems.length === 0 ? (
+                  <div className="text-sm text-amber-700">請先建立 managerGroup 選項池。</div>
+                ) : (
+                  managerGroupItems.map(item => (
+                    <label
+                      key={`fill-${item.value}`}
+                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-slate-50"
+                    >
+                      <input
+                        type="checkbox"
+                        className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                        checked={fillGroups.includes(item.value)}
+                        onChange={e =>
+                          setFillGroups(prev =>
+                            e.target.checked
+                              ? [...prev, item.value]
+                              : prev.filter(v => v !== item.value)
+                          )
+                        }
+                      />
+                      {item.label}
+                    </label>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
           <div>
             <label className="label mb-2">
               哪些管理群組可以看這張表的資料？
               <span className="block text-xs font-normal text-slate-500 mt-1">
-                沒有勾選時，只有 Superuser 和填表人自己看得到。
+                管理群組可讀取他人提交，但不能更正或作廢他人紀錄。未勾選時僅 Superuser 與填表人可見。
               </span>
             </label>
             {managerGroupItems.length === 0 ? (
@@ -471,8 +554,10 @@ function FormBuilder() {
 
 export default function FormEditPage() {
   return (
-    <Suspense fallback={<Spinner />}>
-      <FormBuilder />
-    </Suspense>
+    <SuperuserGuard>
+      <Suspense fallback={<Spinner />}>
+        <FormBuilder />
+      </Suspense>
+    </SuperuserGuard>
   )
 }

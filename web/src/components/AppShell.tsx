@@ -5,19 +5,21 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { ClipboardList, Database, LayoutGrid, ListTree, LogOut, Menu, Sparkles, Users, X } from 'lucide-react'
 import { useAuth } from '@/components/auth'
-import { APP_NAME, APP_SUBTITLE, SUPERUSERS } from '@/lib/config'
+import { APP_NAME, APP_SUBTITLE, ORG_DOMAIN } from '@/lib/config'
 import { Spinner } from '@/components/ui'
 
 const NAV = [
-  { href: '/fill', label: '填報', icon: ClipboardList, desc: '選一張表格填寫' },
-  { href: '/data', label: '資料池', icon: Database, desc: '查詢與匯出所有提交' },
-  { href: '/forms', label: '表格', icon: LayoutGrid, desc: '建立與管理表格' },
-  { href: '/options', label: '選項池', icon: ListTree, desc: '管理 KEY 與標準值' },
-  { href: '/users', label: '權限', icon: Users, desc: '設定各群組管理員' },
+  { href: '/fill', label: '填報', icon: ClipboardList, desc: '選一張表格填寫', adminOnly: false },
+  { href: '/data', label: '資料池', icon: Database, desc: '查詢與匯出所有提交', adminOnly: false },
+  { href: '/forms', label: '表格', icon: LayoutGrid, desc: '建立與管理表格', adminOnly: true },
+  { href: '/options', label: '選項池', icon: ListTree, desc: '管理 KEY 與標準值', adminOnly: true },
+  { href: '/users', label: '權限', icon: Users, desc: '設定各群組管理員', adminOnly: true },
 ]
 
+const ADMIN_PREFIXES = ['/forms', '/options', '/users']
+
 export function AppShell({ children }: { children: ReactNode }) {
-  const { user, loading, isSuperuser, signOut } = useAuth()
+  const { user, loading, isSuperuser, isOrgUser, signOut, email } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -27,10 +29,22 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [loading, user, router])
 
   useEffect(() => {
+    if (loading || !user) return
+    if (!isOrgUser) {
+      signOut().then(() => router.replace('/'))
+      return
+    }
+    const needsAdmin = ADMIN_PREFIXES.some(p => pathname === p || pathname.startsWith(`${p}/`))
+    if (needsAdmin && !isSuperuser) {
+      router.replace('/fill')
+    }
+  }, [loading, user, isOrgUser, isSuperuser, pathname, router, signOut])
+
+  useEffect(() => {
     setMenuOpen(false)
   }, [pathname])
 
-  if (loading || !user) {
+  if (loading || !user || !isOrgUser) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Spinner />
@@ -38,10 +52,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     )
   }
 
-  // Active navigation based on user role
-  const activeNav = isSuperuser
-    ? NAV
-    : NAV.filter(item => item.label === '填報' || item.label === '資料池')
+  const activeNav = NAV.filter(item => !item.adminOnly || isSuperuser)
 
   const nav = (
     <nav className="space-y-1">
@@ -106,7 +117,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         {nav}
 
         <div className="mt-auto border-t border-slate-100 pt-4">
-          <p className="truncate px-3 text-xs text-slate-400">{user.email}</p>
+          <p className="truncate px-3 text-xs text-slate-400">{email}</p>
+          <p className="px-3 text-[10px] text-slate-300">@{ORG_DOMAIN}</p>
           <button
             className="btn-ghost mt-1 w-full justify-start"
             onClick={() => signOut().then(() => router.replace('/'))}
