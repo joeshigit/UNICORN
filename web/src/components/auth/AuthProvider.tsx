@@ -1,73 +1,83 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
-import { User } from 'firebase/auth'
-import { onAuthChange, isLeader, isDeveloper, signOut as authSignOut } from '@/lib/auth'
-import { useRouter } from 'next/navigation'
+import type { User } from 'firebase/auth'
+import { onAuthChange, signOut as authSignOut, isSuperuserEmail, isOrgEmail } from '@/lib/auth'
+import { ORG_DOMAIN } from '@/lib/config'
 
-interface AuthContextType {
+interface AuthContextValue {
   user: User | null
+  email: string
+  uid: string
   loading: boolean
-  isLeader: boolean
-  isDeveloper: boolean
+  isSuperuser: boolean
+  isOrgUser: boolean
   signOut: () => Promise<void>
 }
 
-const AuthContext = createContext<AuthContextType>({
+const AuthContext = createContext<AuthContextValue>({
   user: null,
+  email: '',
+  uid: '',
   loading: true,
-  isLeader: false,
-  isDeveloper: false,
+  isSuperuser: false,
+  isOrgUser: false,
   signOut: async () => {},
 })
 
-// AuthProvider 元件
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
-  const router = useRouter()
 
   useEffect(() => {
-    // 監聯登入狀態變化
-    const unsubscribe = onAuthChange((user) => {
-      setUser(user)
+    return onAuthChange(nextUser => {
+      setUser(nextUser)
       setLoading(false)
     })
-
-    // 清理訂閱
-    return () => unsubscribe()
   }, [])
 
-  const handleSignOut = async () => {
-    try {
-      await authSignOut()
-      router.push('/login')
-    } catch (error) {
-      console.error('登出失敗:', error)
-    }
-  }
-
-  const value: AuthContextType = {
+  const email = user?.email || ''
+  const value: AuthContextValue = {
     user,
+    email,
+    uid: user?.uid || '',
     loading,
-    isLeader: isLeader(user),
-    isDeveloper: isDeveloper(user),
-    signOut: handleSignOut,
+    isSuperuser: isSuperuserEmail(email),
+    isOrgUser: isOrgEmail(email) && !!user?.emailVerified,
+    signOut: authSignOut,
   }
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  )
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
-// useAuth Hook
-export function useAuth(): AuthContextType {
-  const context = useContext(AuthContext)
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider')
+export function useAuth(): AuthContextValue {
+  return useContext(AuthContext)
+}
+
+/** Superuser 專頁守衛；非 Superuser 顯示拒絕訊息 */
+export function SuperuserGuard({ children }: { children: ReactNode }) {
+  const { loading, isSuperuser, email } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-sm text-slate-500">
+        載入中…
+      </div>
+    )
   }
-  return context
-}
 
+  if (!isSuperuser) {
+    return (
+      <div className="card mx-auto max-w-lg p-8 text-center">
+        <h1 className="text-lg font-semibold">沒有權限</h1>
+        <p className="mt-2 text-sm text-slate-500">
+          此頁面僅限 Superuser。目前登入：{email || '（未登入）'}
+          <br />
+          組織網域：@{ORG_DOMAIN}
+        </p>
+      </div>
+    )
+  }
+
+  return <>{children}</>
+}

@@ -1,409 +1,273 @@
-# 獨角獸 - Unicorn - DataCaptureSystem 架構與開發計畫
+# 架構說明（多使用者 Stabilization）
+
+操作步驟看 [README](../README.md)，建表流程看 [建表手冊](form-manual.md)。
 
 ---
 
-## 0. 系統命名
+## 1. 四層架構
 
-### 0.1 系統名稱
-- **中文**：獨角獸
-- **英文**：Unicorn - DataCaptureSystem
-- **Firebase Project ID**：`unicorn-dcs-dev` / `unicorn-dcs-prod`
-- **Web App 名稱**：`unicorn-web`
-
-### 0.2 平台名稱
-- **Leader 平台**：**表格設定平台**
-- **Staff 平台**：**資料填報中心**
-
-### 0.3 Leader 選單（中文版）
-- **總覽**（Dashboard）
-- **表格**（Templates）
-  - 新增表格
-  - 編輯表格
-  - 啟用/停用
-- **下拉選項池**（OptionSets）
-  - 新增選項池
-  - 編輯選項池
-  - 排序/停用選項池
-- **匯出**（Exports）
-  - 匯出資料到 Google Sheet
-  - 查看匯出狀態
-- **設定**（Settings）
-  - 分類與動作命名（佔位）
+| 層 | Collection | 性質 |
+|----|-----------|------|
+| **Meaning** | `optionSets` | 字典。KEY 與合法 VALUE |
+| **Template** | `templates` | 表格定義（含填報／管理 ACL） |
+| **Submission** | `submissions` | 不可變事件，單一資料池 |
+| **Staging** | `uploadSessions` | 送出前檔案暫存擁有權（非業務真相） |
+| **Derived View** | submission 內 `_` 欄位 | 寫入當下算好並凍結 |
 
 ---
 
-## 1. 🦄 UNICORN 核心設計：Universal KEY
+## 2. 身分與授權
 
-### 1.1 KEY vs LABEL vs VALUE
+### 組織邊界
 
-| 概念 | 說明 | 範例 |
-|------|------|------|
-| **KEY** | 系統統一的欄位名稱，跨所有表格相同 | `school`, `startDateTime`, `quantity1` |
-| **LABEL** | UI 顯示名稱，Leader 自由設計 | 「入營學校」「駐守學校」「發信學校」 |
-| **VALUE** | 標準化的值，來自 optionSet | `粵華中學`（不是「粵華」「粵華學校」） |
-
-### 1.2 Universal Keys（系統固定的欄位 KEY）
-
-| KEY | 類型 | 說明 |
-|-----|------|------|
-| `school` | optionSet | 學校 |
-| `service` | optionSet | 服務類型 |
-| `project` | optionSet | 項目 |
-| `format` | optionSet | 格式 |
-| `action` | optionSet | 動作類型 |
-| `department` | optionSet | 部門 |
-| `status` | optionSet | 狀態 |
-| `category` | optionSet | 分類 |
-| `startDateTime` | datetime | 開始時間（yyyymmdd hh:mm） |
-| `endDateTime` | datetime | 結束時間（yyyymmdd hh:mm） |
-| `quantity1` | number | 數量1 |
-| `quantity2` | number | 數量2 |
-| `quantity3` | number | 數量3 |
-| `amount1` | number | 金額1 |
-| `amount2` | number | 金額2 |
-| `notes1` | text | 備註1（單行） |
-| `notes2` | textarea | 備註2（多行） |
-| `title` | text | 標題 |
-| `name` | text | 名稱 |
-| `description` | textarea | 描述 |
-| `content` | textarea | 內容 |
-| `attachment` | file | 附件 |
-| `documents` | file | 文件 |
-| `reference` | reference | 引用 |
-
-### 1.3 設計原則
-
-1. **KEY 統一**：所有表格使用相同的 KEY，確保跨表查詢一致
-2. **LABEL 自由**：Leader 可以為同一個 KEY 設定不同的 LABEL
-3. **VALUE 標準化**：透過 optionSet 強制統一，避免「粵華」「粵華中學」不一致
-4. **扁平結構**：用戶資料直接存在頂層，不使用 `values: {}` 巢狀
-
----
-
-## 2. 建立 Firebase 專案（步驟）
-
-### 2.1 進入 Firebase Console
-- 網址：`https://console.firebase.google.com/`
-- 用你的 Google Workspace 帳號登入
-
-### 2.2 建立專案
-- 點 **Add project**
-- **Project name**：`Unicorn DataCaptureSystem (Dev)` 或 `(Prod)`
-- **Project ID**：`unicorn-dcs-dev` / `unicorn-dcs-prod`（建立後不可改）
-- Google Analytics：可先不開
-
-### 2.3 啟用產品
-- **Authentication**：啟用 Google Sign-In，限制網域（hd claim 驗證）
-- **Firestore**：建立資料庫（Native mode，asia-east1 或你偏好的區域）
-- **Hosting**：部署 Next.js
-- **Cloud Functions（2nd gen）**：後端 API
-
-### 2.4 建立服務帳號（Drive 上傳用）
-- 在 GCP Console 建立服務帳號
-- 授予 Shared Drive 寫入權限
-- 下載金鑰 JSON，存入 Secret Manager
-
----
-
-## 3. 資料結構（Firestore Collections）
-
-### 3.1 `templates`（表格定義）
+Rules 要求：
 
 ```
-templates/{templateId}
+request.auth != null
+&& request.auth.token.email_verified == true
+&& request.auth.token.email.matches('.*@dbyv\\.org$')
 ```
 
-| 欄位 | 型別 | 說明 |
-|------|------|------|
-| `name` | string | 表格名稱（如「營隊登記」） |
-| `moduleId` | string | 分類（如 CAMP） |
-| `actionId` | string | 動作（如 REGISTER） |
-| `enabled` | boolean | 是否啟用 |
-| `version` | number | 版本號 |
-| `createdBy` | string | Leader email |
-| `createdAt` | timestamp | 建立時間 |
-| `updatedAt` | timestamp | 更新時間 |
-| `fields` | array | 欄位定義（見下方） |
-| `defaults` | map | 預設值設定 |
+前端另以 Google `hd: dbyv.org` 與登入後檢查作為便利層，**不能替代 rules**。
 
-#### `fields[]` 欄位定義
+### 角色
 
-```json
+- **Superuser**：rules 硬編碼 email 清單（與 `NEXT_PUBLIC_OWNER_EMAIL` 對齊）
+- **Manager**：`userRoles/{email}.groups` ∩ `templates/{id}.managerGroups`
+- **Submitter**：可填 `fillAccessType` 允許的表；擁有自己的 submission
+
+Manager **可讀不可改他人鏈**。更正／作廢僅擁有者或 Superuser。
+
+### 模板填報 ACL
+
+```js
+fillAccessType: 'allOrgUsers' | 'groups'
+fillGroups: string[]          // 當 type=groups
+managerGroups: string[]       // 只控制讀取管理，不控制填報
+```
+
+Rules 在 `templates` 讀取與 `submissions` CREATE 時雙重檢查。缺少 `userRoles` 或空 `managerGroups` 時以 `exists()` / list 檢查安全失敗（deny）。
+
+---
+
+## 3. Submission 文件
+
+```js
 {
-  "key": "school",           // 🦄 必須是 Universal Key
-  "type": "dropdown",
-  "label": "入營學校",        // Leader 自由設計
-  "required": true,
-  "order": 0,
-  "helpText": "選擇入營的學校",
-  "optionSetId": "school"    // 對應 optionSet
+  _templateId, _templateName, _templateModule, _templateAction,
+  _eventType: 'CAMP.REGISTER',   // 寫入當下：module.action
+  _templateVersion,
+
+  _submitterUid, _submitterEmail,   // 穩定擁有者
+  _actorUid, _actorEmail,           // 此版本操作者
+  _eventKind: 'CREATE' | 'CORRECTION' | 'VOID',
+
+  _submittedAt,                     // Firestore Timestamp
+  _submittedMonth: '2026-07',       // Asia/Macau
+  _status: 'ACTIVE' | 'VOID',
+  _isLatest: true,
+  _supersedes, _supersededBy,
+
+  _fieldLabels, _optionLabels, _fieldKeys,
+  files: [{ fieldKey, path, name, mimeType, size, uploadedAt, uploadedBy }],
+
+  // Universal KEY 平鋪
+  school: ['粵華中學'],
+  schoolCombined: '粵華中學',
+  schoolCount: 1,
+  eventDate: '2026-07-29',
+  eventTime: '09:30',
 }
 ```
 
 ---
 
-### 3.2 `submissions`（唯一 universal table）
+## 4. 空白是一個答案
 
+**同一張表的每一筆資料形狀完全相同。** 每個被問到的問題，每一筆都有對應的欄位；空白是一個值，不是欄位消失。
+
+| 型別 | 有值 | 空白 | 怎麼查空白 |
+|------|------|------|-----------|
+| 文字／多行／數字／日期／時間 | 值 | `null` | `where(key, '==', null)` |
+| 下拉 | `['粵華中學']` / `'粵華中學'` / `1` | `[]` / `''` / `0` | `where(keyCount, '==', 0)` |
+| 檔案 | 檔案數量 | `0` | `where(key, '==', 0)` |
+
+### 為什麼不能讓 KEY 消失
+
+在 Firestore 裡「欄位不存在」不是一個值，是**索引上的一個洞**：
+
+- 對那個欄位的任何條件都撈不到它，連 `!=` 也不行
+- `orderBy` 那個欄位時，**整筆紀錄會被排除**——不是排到最後，是消失
+- 沒辦法查「誰沒填」
+
+`null` 是真正的值，所以三個問題都消失：`== null` 查得到、`orderBy` 會納入（排最前）、數字的範圍查詢仍然正確排除它。這就是標準的可空欄位語意，跟 SQL 的 NULL 一樣。
+
+數字欄位不能用 `''` 或 `0` 當空白：`''` 會讓同一個 KEY 出現字串與數字兩種型別，範圍查詢就壞了；`0` 會跟使用者真的填 0 混在一起。`null` 兩個問題都沒有。
+
+### 連帶的好處
+
+不需要另外存一份「哪些欄位是空白」的清單。填答率直接查得到：
+
+```js
+// 這個月有幾份個案報告漏填了備註
+where('_submittedMonth', '==', '2026-07')
+where('note', '==', null)
 ```
-submissions/{submissionId}
-```
 
-| 欄位 | 型別 | 說明 |
-|------|------|------|
-| `_templateId` | string | 對應的表格 ID |
-| `_templateModule` | string | 分類（從 template 複製） |
-| `_templateAction` | string | 動作（從 template 複製） |
-| `_templateVersion` | number | 版本號（從 template 複製） |
-| `_submitterId` | string | 填報人 ID |
-| `_submitterEmail` | string | 填報人 email |
-| `_submittedAt` | timestamp | 提交時間 |
-| `_submittedMonth` | string | 提交月份（YYYY-MM） |
-| `_status` | string | `ACTIVE` / `CANCELLED` |
-| `school` | string | 🦄 Universal Key: VALUE |
-| `startDateTime` | string | 🦄 Universal Key: VALUE |
-| `quantity1` | number | 🦄 Universal Key: VALUE |
-| ... | ... | 其他 Universal Keys |
-| `_fieldLabels` | map | 欄位 LABEL 快照 |
-| `_optionLabels` | map | 選項 LABEL 快照 |
-| `files` | array | 檔案 metadata |
-
-#### Submission 結構範例
-
-```json
-{
-  "_templateId": "template_camp_register",
-  "_templateModule": "CAMP",
-  "_templateAction": "REGISTER",
-  "_templateVersion": 1,
-  "_submitterId": "user_001",
-  "_submitterEmail": "staff@org.com",
-  "_submittedAt": "2026-01-20T14:30:00Z",
-  "_submittedMonth": "2026-01",
-  "_status": "ACTIVE",
-  
-  "school": "粵華中學",
-  "startDateTime": "20260115 09:00",
-  "endDateTime": "20260117 16:00",
-  "quantity1": 30,
-  "notes1": "需要素食餐",
-  
-  "_fieldLabels": {
-    "school": "入營學校",
-    "startDateTime": "入營時間",
-    "endDateTime": "退營時間",
-    "quantity1": "學生人數",
-    "notes1": "特殊需求"
-  },
-  
-  "_optionLabels": {
-    "school": "粵華中學"
-  },
-  
-  "files": [
-    {
-      "fieldKey": "documents",
-      "driveFileId": "1a2b3c...",
-      "name": "名單.pdf",
-      "mimeType": "application/pdf",
-      "size": 245678,
-      "webViewLink": "https://drive.google.com/...",
-      "uploadedAt": "2026-01-20T14:30:00Z",
-      "uploadedBy": "staff@org.com"
-    }
-  ]
-}
-```
+`_fieldLabels` / `_fieldKeys` / `_optionLabels` 也一律涵蓋所有欄位，鍵集合在同一張表內不會因為有沒有填而不同。
 
 ---
 
-### 3.3 `optionSets`（下拉選項池）
+## 5. 寫入當下的決定
 
-```
-optionSets/{optionSetId}
-```
+| 值 | 何時 | 誰 | 鎖定 |
+|----|------|----|------|
+| `_fieldLabels` / `_optionLabels` | 送出 | 前端 | 寫入即鎖 |
+| `_submittedMonth` | 送出 | `currentMonth()` @ Asia/Macau | 寫入即鎖 |
+| `_eventType` | 送出 | `module.action` | 寫入即鎖 |
+| `<key>` / Combined / Count | 送出 | `buildSubmissionDoc` | 寫入即鎖 |
+| `_isLatest` 交棒 | 更正／作廢交易 | 前端 transaction + rules | 單向不可逆 |
+| 擁有者欄位 | 鏈上第一筆 CREATE | 之後更正不可偽造 | rules 驗證 parent |
 
-| 欄位 | 型別 | 說明 |
-|------|------|------|
-| `code` | string | 🦄 對應 Universal Key（如 `school`） |
-| `name` | string | 選項池顯示名稱（如「學校」） |
-| `description` | string | 說明 |
-| `isMaster` | boolean | 🦄 是否為完整清單（Master） |
-| `masterSetId` | string | 🦄 子集指向 Master 的 ID |
-| `createdBy` | string | Leader email |
-| `createdAt` | timestamp | 建立時間 |
-| `updatedAt` | timestamp | 更新時間 |
-| `items` | array | 選項清單 |
+---
 
-#### `items[]` 結構
+## 6. 檔案生命週期
 
-```json
-[
-  { "value": "粵華中學", "label": "粵華中學", "status": "active", "sort": 0 },
-  { "value": "培正中學", "label": "培正中學", "status": "active", "sort": 1 }
-]
-```
+1. 開啟填報 → `ensureUploadSession(submissionId)`
+2. 上傳 → `uploads/{uid}/{submissionId}/{fieldKey}/{fileId}`（需有效 session、≤20MB、核准 MIME）
+3. 送出 → 寫入 submission（只存 path）→ 刪 session
+4. 定稿後 → Storage **禁止 delete**；讀取限擁有者／Manager／Superuser
+5. 孤兒清理 → 排程後端依過期 session 刪未定稿檔（**不放寬 rules**）
 
-#### 🦄 Master/Subset 設計
+前端下載：`getBlob` → 短效 `URL.createObjectURL`。
 
-同一個 Universal KEY 可以有多個 OptionSet：
+---
 
-```javascript
-// Master（完整清單）
-{
-  code: "school",
-  name: "所有學校",
-  isMaster: true,
-  items: [/* 100 個學校 */]
-}
+## 7. 查詢完整性：先計數，再決定要不要查
 
-// Subset A（中學子集）
-{
-  code: "school",              // 同一個 KEY
-  name: "中學",
-  isMaster: false,
-  masterSetId: "school_master",
-  items: [/* 50 個中學 */]
-}
+資料池的查詢順序是強制的，跟銀行 App 一樣：
 
-// Subset B（教會小學子集）
-{
-  code: "school",              // 同一個 KEY
-  name: "教會小學",
-  isMaster: false,
-  masterSetId: "school_master",
-  items: [/* 20 個教會小學 */]
-}
+1. **提交月份範圍（必填）** — 預設當月
+2. **哪一張表格（選填）**
+3. 其餘條件都是**前端精修**
+
+只有前兩項送進 Firestore：
+
+```js
+where('_isLatest', '==', true)              // 除非要看被更正的舊版本
+where('_submittedMonth', '>=', fromMonth)   // YYYY-MM 字典序，避開時區
+where('_submittedMonth', '<=', toMonth)
+// 選填：where('_templateId', '==', templateId)
+orderBy('_submittedMonth', 'asc')           // 不等式欄位必須是第一個 orderBy
+orderBy('_submittedAt', 'desc')
 ```
 
-**規則**：
-- 子集的 `value` 必須存在於 Master 中
-- 新增選項只能在 Master 中進行
-- 不管用哪個子集提交，`school: "粵華中學"` 的 VALUE 都是標準化的
+送出查詢前先用 `getCountFromServer` 計數：
+
+- 超過 `QUERY_DISPLAY_LIMIT`（500）→ **完全不撈資料**，回 `{ blocked: true, count, limit }`，請使用者縮小月份範圍
+- 在上限內 → 把該範圍全部取回，前端精修作用在**完整集合**上
+
+所以完整性是保證，不是警告。一次被擋下的搜尋只花約 1–2 次讀取，而不是 501 次。
+
+**為什麼月份範圍必須必填**：前端過濾永遠不會降低 Firestore 層的筆數。若讓使用者只給一個 `school == X` 去計數，他再怎麼加條件筆數都不變，會卡在永遠被擋。範圍必填之後，計數永遠落在時間軸上，縮小一定有效。
+
+**清單查詢的規則陷阱**：`list` 與聚合查詢的規則是對「查詢條件推導出的 resource」求值，沒有被條件約束的欄位是 `undefined`。`isOwnerOfRecord()` 檢查 `_submitterUid`，所以擁有者那組查詢**必須用 `_submitterUid` 過濾**，用 `_submitterEmail` 會讓規則判不出身分而整個查詢被拒。
+
+- `in` 以 `FIRESTORE_IN_LIMIT`（30）分批，**不截斷模板清單**
+- 非 Superuser 的計數是多組查詢相加，屬於**上界**（同一筆可能既是自己填的、又屬於自己管的表格）。上界安全，代價是偶爾多擋一次
+- 完整匯出走 `exportAllSubmissions`，cursor 分頁、不套用顯示上限，上限是 `EXPORT_HARD_CAP`（20,000）
+- module／action 映射 `_templateModule`／`_templateAction`，不當作一般 KEY 篩選
+
+### 索引為什麼剛好是 9 個
+
+查詢只有一種形狀：等值條件 ＋ `_submittedMonth` 範圍 ＋ `orderBy(_submittedMonth, _submittedAt)`。
+
+等值條件有三個可選欄位（`_submitterUid` / `_isLatest` / `_templateId`），共 8 種組合。**每一種組合都需要自己的索引**——索引欄位有順序，範圍欄位必須排在所有等值欄位之後，所以較長的索引無法服務較短的查詢。
+
+| 等值條件 | 什麼時候用到 |
+|---------|-------------|
+| 無 | Superuser ＋ 看舊版本 ＋ 不指定表格 |
+| `_isLatest` | Superuser 的預設查詢 |
+| `_templateId` | Superuser ＋ 看舊版本 ＋ 指定表格 |
+| `_isLatest` `_templateId` | Superuser 指定表格；Manager 的 `in` 查詢 |
+| `_submitterUid` | 一般使用者 ＋ 看舊版本 |
+| `_submitterUid` `_isLatest` | 一般使用者的預設查詢 |
+| `_submitterUid` `_templateId` | 一般使用者 ＋ 看舊版本 ＋ 指定表格 |
+| `_submitterUid` `_isLatest` `_templateId` | 一般使用者指定表格 |
+
+加上 `uploadSessions` 的孤兒清理索引，總共 9 個。
+
+`module` / `action` / `status` / 跨表 KEY 都是前端精修，**不需要索引**。跨表 KEY 也不需要複合索引，所以新增選項池不必改索引檔、不必重新部署。
+
+每次寫入都會更新所有相符的索引，所以多餘的索引是實際的寫入成本，不要「留著以防萬一」。
+
+### 跨表格搜尋
+
+不指定表格時本來就是跨表格查詢——`submissions` 是統一的池子。以某個 Universal KEY 找特定值仍然可用，但它是**月份範圍內的前端精修**。以 KEY 為主軸、不先給時間範圍的專用搜尋模式是另一個需求，留待實際使用習慣明朗後再設計。
 
 ---
 
-## 4. Reference 欄位（Submission as Options）
+## 8. 欄位輸入模式
 
-### 4.1 流程
+`required` 與 `inputMode` 是**兩個正交的維度**：
 
-1. **Leader 建立 Template A**（如：營隊登記）
-   - 欄位包含日期範圍（dateRole=start/end）
+| 維度 | 決定什麼 | 值 |
+|------|---------|-----|
+| `required` | 空白算不算答案 | 必答／可選答 |
+| `inputMode` | 使用者能不能改 | `open` / `default` / `locked` |
 
-2. **Staff 填報 Template A**
-   - 系統自動把日期存入 `startDateTime`/`endDateTime`
+八種組合只有一格無效：
 
-3. **Leader 建立 Template B**（如：事故報告）
-   - 有 reference 欄位，`refConfig.templateId` 指向 Template A
-   - 可設定日期範圍篩選
+- **必答 + `locked` + 沒有預填值** → 不接受空白但使用者又不能填，永遠送不出去 → **建表時擋下**
+- 可選答 + `locked` + 沒有值 → 有效，等於「鎖定為空白」
 
-4. **Staff 填報 Template B**
-   - 前端呼叫 `listReferenceOptions` API
-   - 後端查詢並回傳可選清單
-   - Staff 選一筆 → 存 `refSubmissionId` + `refLabelSnapshot`
+`inputMode` 未設定即 `open`，舊模板天然相容、不需要遷移。
 
-### 4.2 安全原則
-- 查詢必須在後端（前端不可直接 query 其他人的 submissions）
-- 只回傳 label/value（不回傳整筆 submission）
-- labelSnapshot 只放必要資訊
+### submission 層零差別
 
----
+三種模式產生的文件**完全相同**。沒有任何欄位記錄「這是預設的」，查詢分不出來也不需要分。下拉的三個形狀照原邏輯產生：
 
-## 5. Cloud Functions 2nd gen
-
-| Function | 用途 | Stage 1 |
-|----------|------|---------|
-| `createSubmission` | 建立 submission（驗證 + denormalize） | ✓ |
-| `updateSubmission` | 更新 submission | ✓ |
-| `uploadFilesToDrive` | 上傳檔案到 Shared Drive | ✓ |
-| `listReferenceOptions` | Reference 下拉清單查詢 | ✓ |
-| `exportSubmissionsToSheet` | 匯出到 Google Sheet | ✓ |
-| `listMySubmissions` | 我的提交清單 | ✓ |
-
----
-
-## 6. Firestore Security Rules
-
-```javascript
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    function isCompanyUser() {
-      return isAuthenticated() && 
-             request.auth.token.email.matches('.*@yourcompany\\.com$');
-    }
-    function isLeader() {
-      return isCompanyUser() && 
-             request.auth.token.leader == true;
-    }
-    
-    match /templates/{templateId} {
-      allow read: if isCompanyUser();
-      allow write: if isLeader();
-    }
-    
-    match /optionSets/{optionSetId} {
-      allow read: if isCompanyUser();
-      allow write: if isLeader();
-    }
-    
-    match /submissions/{submissionId} {
-      allow read: if isCompanyUser() && 
-                     resource.data._submitterEmail == request.auth.token.email;
-      allow create: if isCompanyUser() && 
-                       request.resource.data._submitterEmail == request.auth.token.email;
-      allow update: if isCompanyUser() && 
-                       resource.data._submitterEmail == request.auth.token.email;
-      allow delete: if false;
-    }
-  }
-}
+```js
+department: ['SCD'], departmentCombined: 'SCD', departmentCount: 1
 ```
 
----
+因此改模式不需要搬資料，只會讓 `_templateVersion` +1。
 
-## 7. Drive 上傳
+### 該寫死什麼
 
-### 7.1 路徑規則
-- `SharedDriveRoot/DataCapture/{moduleId}/{yyyy}/{mm}/`
-- 檔名：`{submissionId}_{originalName}`
+判準是「這個值改變之後，這還是同一張表嗎」：
 
-### 7.2 流程
-1. 前端選檔 → 呼叫 `uploadFilesToDrive`
-2. Functions 用服務帳號上傳
-3. 回傳 `driveFileId`, `webViewLink`
-4. 更新 submission 的 `files[]`
+- 個案報告的部門改成維修部門 → 已經是另一張表 → `locked`
+- 個案報告在不同學校填 → 還是同一張表 → `open` 或 `default`
 
----
+**不確定時選 `open`**，因為猜錯的代價不對稱：設成提問而其實從不變動，改成鎖定幾乎零成本；設成鎖定而其實會變動，就得複製一堆近乎相同的表格，`managerGroups` 要設 N 次、加欄位要改 N 次。
 
-## 8. Fatal Errors（開發時嚴禁）
+型別限制：`file` 無法預填；`date` / `time` 寫死通常是 bug，建表時會提醒。
 
-- 前端直接 query 其他人的 submissions
-- 前端用 Drive OAuth 直接寫 Shared Drive
-- 讓使用者任意設定 `_submitterEmail`
-- Reference label 包含敏感資訊
-- 使用非 Universal Key 的欄位名稱
-- 用可預測的 submissionId
+### UI
+
+`locked` 欄位**留在原本的順序位置**、灰掉並加鎖圖示，不搬到別處——欄位順序對應使用者熟悉的資料結構（Sheet 欄位順序、紙本表單排列），搬走會破壞對照習慣。
+
+用 `disabled` 而不是 `readOnly`，因為 `readOnly` 對 `<select>` 與 checkbox 無效。payload 從 React state 組出來、不依賴原生表單送出，所以 `disabled` 不影響資料寫入。
 
 ---
 
-## 9. 開發階段
+## 9. 語意日期／時間
 
-### Stage 1（MVP + Reference）
-1. Firebase 專案建立 + 服務帳號
-2. Next.js 骨架 + Firebase Auth
-3. Firestore collections + Security Rules
-4. Cloud Functions（createSubmission, updateSubmission, listReferenceOptions, uploadFilesToDrive）
-5. Staff UI
-6. Leader UI
-7. 匯出功能
+- Date：`YYYY-MM-DD` 字串 KEY（見上）
+- Time：`HH:mm` 澳門牆鐘；**不**自動令 `endTime = startTime`
+- 點事件：`eventDate` + 可選 `eventTime`
+- 區間：`startDate`/`startTime` + 可選 `endDate`/`endTime`
+- `_submittedAt` 維持 Timestamp
 
-### Stage 2+（未來）
-- Computed 欄位 UI
-- 更細的 Reference 權限
-- 審核流程
-- 報表與篩選
+---
 
+## 10. 刻意不做的事
+
+| 不做 | 理由 |
+|------|------|
+| 公開 download URL 永久 token | 檔案 ACL 會被繞過 |
+| Manager 代為更正他人 | 所有權與稽核分離 |
+| 讀取時彙總 | 寫入當下已凍結 |
+| 自訂欄位 KEY | 破壞跨表查詢 |
+| 刪除 submission | 事件不刪，只作廢 |
