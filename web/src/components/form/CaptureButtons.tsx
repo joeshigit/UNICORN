@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Camera, ClipboardPaste } from 'lucide-react'
 import { openBillPaste, openDocumentScanner } from '@/lib/capture'
-import { uploadFile } from '@/lib/storage'
+import { MAX_FILE_SIZE, formatFileSize, uploadFile } from '@/lib/storage'
 import type { Actor } from '@/lib/db'
 import type { FileInfo } from '@/types'
 
@@ -37,12 +37,21 @@ export function CaptureButtons({
 
   const run = async (
     launch: (onMessage: (message: string) => void) => Promise<Blob | null>,
-    prefix: string
+    prefix: string,
+    oversizeHint: string
   ) => {
     setBusy(true)
     try {
       const blob = await launch(onError)
       if (!blob) return
+      // 拼貼沒有內建大小上限，先在這裡擋下來並給可行動的建議，
+      // 不要等 uploadFile 才報錯讓使用者白做
+      if (blob.size > MAX_FILE_SIZE) {
+        onError(
+          `產生的 PDF 為 ${formatFileSize(blob.size)}，超過 ${formatFileSize(MAX_FILE_SIZE)} 上限。${oversizeHint}`
+        )
+        return
+      }
       const file = new File([blob], pdfName(prefix), { type: 'application/pdf' })
       onUploaded(await uploadFile(file, fieldKey, submissionId, actor))
     } catch (err) {
@@ -58,7 +67,7 @@ export function CaptureButtons({
         type="button"
         className="btn-secondary btn-sm"
         disabled={busy || disabled}
-        onClick={() => run(openDocumentScanner, '掃描')}
+        onClick={() => run(openDocumentScanner, '掃描', '請減少頁數後重試。')}
       >
         <Camera className="h-4 w-4" />
         掃描文件
@@ -67,7 +76,7 @@ export function CaptureButtons({
         type="button"
         className="btn-secondary btn-sm"
         disabled={busy || disabled}
-        onClick={() => run(openBillPaste, '截圖')}
+        onClick={() => run(openBillPaste, '截圖', '請改用灰階或減少槽位圖片後重試。')}
       >
         <ClipboardPaste className="h-4 w-4" />
         螢幕截圖拼貼

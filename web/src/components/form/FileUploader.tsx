@@ -74,10 +74,15 @@ export function FileUploader({
   const [uploadError, setUploadError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // 上傳與擷取都是非同步的，期間父層可能因為別的欄位而重繪。
+  // 用 ref 讀最新的清單，避免用到點擊當下捕獲的舊 value 把其他上傳蓋掉。
+  const valueRef = useRef(value)
+  valueRef.current = value
+
   const handleSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files || [])
     if (selected.length === 0) return
-    if (value.length + selected.length > maxFiles) {
+    if (valueRef.current.length + selected.length > maxFiles) {
       setUploadError(`最多 ${maxFiles} 個檔案`)
       return
     }
@@ -89,7 +94,7 @@ export function FileUploader({
       for (const file of selected) {
         uploaded.push(await uploadFile(file, fieldKey, submissionId, actor))
       }
-      onChange([...value, ...uploaded])
+      onChange([...valueRef.current, ...uploaded])
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : '上傳失敗')
     } finally {
@@ -146,7 +151,7 @@ export function FileUploader({
           fieldKey={fieldKey}
           submissionId={submissionId}
           actor={actor}
-          onUploaded={file => onChange([...value, file])}
+          onUploaded={file => onChange([...valueRef.current, file])}
           onError={setUploadError}
           disabled={uploading}
         />

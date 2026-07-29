@@ -37,6 +37,9 @@ const SCANNER_JS_URL = '/capture/document-scanner.js'
 const BILL_PASTE_CSS_URL = '/capture/bill-paste.css'
 const BILL_PASTE_JS_URL = '/capture/bill-paste.js'
 
+const SCANNER_OVERLAY = '.doc-scanner-overlay'
+const BILL_PASTE_OVERLAY = '#bill-paste-overlay'
+
 const pending = new Map<string, Promise<void>>()
 
 function loadAsset(url: string, kind: 'js' | 'css'): Promise<void> {
@@ -62,6 +65,7 @@ function loadAsset(url: string, kind: 'js' | 'css'): Promise<void> {
     element.onload = () => resolve()
     element.onerror = () => {
       pending.delete(url)
+      element.remove()
       reject(new Error(`載入失敗：${url}`))
     }
     document.head.appendChild(element)
@@ -77,16 +81,52 @@ async function ensureBase(): Promise<void> {
   await loadAsset(JSPDF_URL, 'js')
 }
 
+/**
+ * 把模組的回呼包成 Promise。
+ *
+ * 模組有幾條路徑只顯示訊息就結束，不呼叫 onConfirm 也不呼叫 onCancel：
+ *   - DocumentScanner：navigator.mediaDevices 不可用、getUserMedia 被拒或失敗
+ *   - BillPaste：另一個擷取視窗開著、jsPDF 未載入
+ * 若不補收尾，Promise 會永遠停在 pending，呼叫端的忙碌狀態就再也解不開。
+ *
+ * 兩種情形分別處理：overlay 從未建立（同步檢查），以及 overlay 建立後
+ * 被模組自己移除卻沒回呼（MutationObserver）。
+ */
 function openAsPromise(
   module: CaptureModule,
+  overlaySelector: string,
   onMessage: (message: string) => void
 ): Promise<Blob | null> {
   return new Promise(resolve => {
+    let settled = false
+    let observer: MutationObserver | null = null
+
+    const finish = (result: Blob | null) => {
+      if (settled) return
+      settled = true
+      if (observer) observer.disconnect()
+      resolve(result)
+    }
+
     module.open({
-      onConfirm: blob => resolve(blob),
-      onCancel: () => resolve(null),
+      onConfirm: blob => finish(blob),
+      onCancel: () => finish(null),
       showMessage: message => onMessage(message),
     })
+
+    if (settled) return
+
+    const overlay = document.querySelector(overlaySelector)
+    if (!overlay) {
+      finish(null)
+      return
+    }
+
+    // 兩個 overlay 都是 document.body 的直接子節點，不需要 subtree
+    observer = new MutationObserver(() => {
+      if (!overlay.isConnected) finish(null)
+    })
+    observer.observe(document.body, { childList: true })
   })
 }
 
@@ -98,7 +138,7 @@ export async function openDocumentScanner(
   await loadAsset(SCANNER_CSS_URL, 'css')
   await loadAsset(SCANNER_JS_URL, 'js')
   if (!window.DocumentScanner) throw new Error('掃描模組未載入')
-  return openAsPromise(window.DocumentScanner, onMessage)
+  return openAsPromise(window.DocumentScanner, SCANNER_OVERLAY, onMessage)
 }
 
 /** 開啟螢幕截圖拼貼；使用者完成時回傳 PDF Blob，取消時回傳 null */
@@ -109,5 +149,5 @@ export async function openBillPaste(
   await loadAsset(BILL_PASTE_CSS_URL, 'css')
   await loadAsset(BILL_PASTE_JS_URL, 'js')
   if (!window.BillPaste) throw new Error('拼貼模組未載入')
-  return openAsPromise(window.BillPaste, onMessage)
+  return openAsPromise(window.BillPaste, BILL_PASTE_OVERLAY, onMessage)
 }

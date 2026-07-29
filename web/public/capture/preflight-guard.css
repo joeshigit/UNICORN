@@ -14,6 +14,9 @@
   font-family: revert;
   line-height: revert;
   letter-spacing: revert;
+  /* Preflight 的 color: inherit 會讓沒宣告顏色的按鈕（例如省墨清單的
+     .doc-scanner-print-mini）繼承 app 的 #0f172a，而非 UA 的 buttontext。 */
+  color: revert;
 }
 
 :where(.doc-scanner-overlay, #bill-paste-overlay) input,
