@@ -434,11 +434,12 @@ export async function deleteTemplate(id: string): Promise<void> {
   await deleteDoc(doc(db, 'templates', id))
 }
 
+/** 刪除保護用。伺服器端聚合，不必把文件撈回來。 */
 export async function countSubmissionsForTemplate(templateId: string): Promise<number> {
-  const snap = await getDocsFromServer(
-    query(collection(db, 'submissions'), where('_templateId', '==', templateId), fsLimit(1000))
+  const snap = await getCountFromServer(
+    query(collection(db, 'submissions'), where('_templateId', '==', templateId))
   )
-  return snap.size
+  return snap.data().count
 }
 
 /** 分批查詢使用者可管理的模板（不截斷群組） */
@@ -856,17 +857,6 @@ function applyLocalFilters(rows: Submission[], q: SubmissionQuery): Submission[]
 function assertMonthRange(q: SubmissionQuery, action: string): void {
   if (!q.fromMonth || !q.toMonth) throw new Error(`${action}必須指定提交月份範圍`)
   if (q.fromMonth > q.toMonth) throw new Error('月份範圍的起始不能晚於結束')
-}
-
-/** 先算筆數再決定要不要查。超過上限就完全不撈資料。 */
-export async function countSubmissions(
-  q: SubmissionQuery,
-  actor: Actor,
-  isSuperuser: boolean
-): Promise<number> {
-  assertMonthRange(q, '查詢')
-  const sets = await resolveIsolation(q, actor, isSuperuser)
-  return countIsolated(rangeConstraints(q), sets)
 }
 
 export async function querySubmissions(

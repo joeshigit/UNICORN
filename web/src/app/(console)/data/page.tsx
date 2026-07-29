@@ -111,6 +111,13 @@ function DataPool() {
   const actor = useMemo(() => ({ uid, email }), [uid, email])
 
   const runQuery = useCallback(async () => {
+    // 範圍顛倒時不要送查詢，畫面已經有提示了
+    if (fromMonth > toMonth) {
+      setRows([])
+      setBlocked(null)
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setError('')
     try {
@@ -127,7 +134,7 @@ function DataPool() {
     } finally {
       setLoading(false)
     }
-  }, [queryInput, actor, isSuperuser])
+  }, [queryInput, actor, isSuperuser, fromMonth, toMonth])
 
   useEffect(() => {
     if (uid && email) runQuery()
