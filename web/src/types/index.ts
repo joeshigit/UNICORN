@@ -19,6 +19,14 @@ export type FieldType =
   | 'dropdown'
   | 'file'
 
+/**
+ * 輸入方式。與 required（必答／可選答）是兩個正交的維度：
+ *   required 決定「空白算不算答案」
+ *   inputMode 決定「使用者能不能改」
+ * 八種組合只有「必答 + locked + 沒有預填值」無效，那會永遠送不出去。
+ */
+export type FieldInputMode = 'open' | 'default' | 'locked'
+
 // ---------- 欄位定義 ----------
 // key 必須是 Universal KEY（FIXED_KEYS 或 optionSet.code）
 export interface FieldDefinition {
@@ -30,6 +38,10 @@ export interface FieldDefinition {
   helpText?: string
   optionSetId?: string
   multiple?: boolean
+  /** 未設定＝open，舊模板天然相容 */
+  inputMode?: FieldInputMode
+  /** default 必須有；locked 可有可無（可選答時等於鎖定為空白） */
+  presetValue?: string | string[]
 }
 
 /** 誰可以填這張表 */

@@ -5,9 +5,10 @@ interface DateTimePickerProps {
   value: string
   onChange: (value: string) => void
   error?: boolean
+  disabled?: boolean
 }
 
-export function DateTimePicker({ value, onChange, error }: DateTimePickerProps) {
+export function DateTimePicker({ value, onChange, error, disabled }: DateTimePickerProps) {
   const [date = '', time = ''] = (value || '').split('T')
   const cls = `field ${error ? 'field-error' : ''}`
 
@@ -21,12 +22,14 @@ export function DateTimePicker({ value, onChange, error }: DateTimePickerProps) 
       <input
         type="date"
         className={cls}
+        disabled={disabled}
         value={date}
         onChange={e => emit(e.target.value, time)}
       />
       <input
         type="time"
         className={`${cls} max-w-[9rem]`}
+        disabled={disabled}
         value={time}
         onChange={e => emit(date, e.target.value)}
       />

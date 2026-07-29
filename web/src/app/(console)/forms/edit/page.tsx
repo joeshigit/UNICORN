@@ -7,13 +7,121 @@ import { ArrowDown, ArrowLeft, ArrowUp, Plus, Trash2 } from 'lucide-react'
 import { SuperuserGuard, useAuth } from '@/components/auth'
 import { ErrorBanner, PageHeader, Spinner } from '@/components/ui'
 import { createTemplate, findLegacyDateKeyUsage, getTemplate, listOptionSets, updateTemplate } from '@/lib/db'
-import { ACTION_CODE, FIXED_KEYS, FIXED_KEY_GROUPS, MANAGER_GROUP_CODE, MODULE_CODE } from '@/lib/keys'
-import type { FieldDefinition, FillAccessType, OptionSet, Template } from '@/types'
+import {
+  ACTION_CODE,
+  FIXED_KEYS,
+  FIXED_KEY_GROUPS,
+  MANAGER_GROUP_CODE,
+  MODULE_CODE,
+  canPresetFieldType,
+  isPresetEmpty,
+  shouldWarnOnPreset,
+  validateFieldMode,
+} from '@/lib/keys'
+import type {
+  FieldDefinition,
+  FieldInputMode,
+  FillAccessType,
+  OptionItem,
+  OptionSet,
+  Template,
+} from '@/types'
 
 interface KeyChoice {
   key: string
   type: FieldDefinition['type']
   label: string
+}
+
+/** 預填值的輸入元件，依欄位型別決定長什麼樣 */
+function PresetValueInput({
+  field,
+  options,
+  onChange,
+}: {
+  field: FieldDefinition
+  options: OptionItem[]
+  onChange: (value: string | string[] | undefined) => void
+}) {
+  const single = Array.isArray(field.presetValue)
+    ? (field.presetValue[0] ?? '')
+    : (field.presetValue ?? '')
+
+  if (field.type === 'dropdown') {
+    const active = options.filter(o => o.status !== 'deprecated')
+
+    if (field.multiple) {
+      const selected = Array.isArray(field.presetValue) ? field.presetValue : []
+      return (
+        <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-300 p-2">
+          {active.length === 0 && <p className="hint px-1 py-1">這個選項池還沒有選項</p>}
+          {active.map(option => (
+            <label key={option.value} className="flex cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                checked={selected.includes(option.value)}
+                onChange={e =>
+                  onChange(
+                    e.target.checked
+                      ? [...selected, option.value]
+                      : selected.filter(v => v !== option.value)
+                  )
+                }
+              />
+              {option.label}
+            </label>
+          ))}
+        </div>
+      )
+    }
+
+    return (
+      <select
+        className="field"
+        value={single}
+        onChange={e => onChange(e.target.value || undefined)}
+      >
+        <option value="">未設定</option>
+        {active.map(option => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    )
+  }
+
+  const inputType =
+    field.type === 'number'
+      ? 'number'
+      : field.type === 'date'
+        ? 'date'
+        : field.type === 'time'
+          ? 'time'
+          : field.type === 'datetime'
+            ? 'datetime-local'
+            : 'text'
+
+  if (field.type === 'textarea') {
+    return (
+      <textarea
+        className="field"
+        rows={2}
+        value={single}
+        onChange={e => onChange(e.target.value || undefined)}
+      />
+    )
+  }
+
+  return (
+    <input
+      type={inputType}
+      className="field"
+      value={single}
+      onChange={e => onChange(e.target.value || undefined)}
+    />
+  )
 }
 
 function FormBuilder() {
@@ -126,6 +234,14 @@ function FormBuilder() {
           if (!next.label.trim()) {
             next.label = fixed?.label || optionSets.find(os => os.code === patch.key)?.name || ''
           }
+          // 換 KEY 一定要清掉預填值，否則會殘留上一個選項池的值，
+          // 寫出不存在於新選項池的 VALUE
+          next.presetValue = undefined
+          if (!canPresetFieldType(next.type)) next.inputMode = undefined
+        }
+        // 換選項池或切換複選時，舊的預填值同樣可能不再有效
+        if (patch.optionSetId !== undefined || patch.multiple !== undefined) {
+          next.presetValue = undefined
         }
         return next
       })
@@ -160,8 +276,46 @@ function FormBuilder() {
     if (findLegacyDateKeyUsage([{ id: 'draft', name, fields } as Template]).length > 0) {
       list.push('請移除已退役的日期 KEY，改用語意化日期／時間 KEY')
     }
+    // 鎖定的欄位使用者救不了設定錯誤，所以這一關非過不可
+    for (const field of fields) {
+      const problem = validateFieldMode(field)
+      if (problem) list.push(problem.message)
+    }
     return list
   }, [name, moduleId, actionId, fields, fillAccessType, fillGroups])
+
+  // 非阻擋的提醒
+  const warnings = useMemo(() => {
+    const list: string[] = []
+    for (const field of fields) {
+      const mode = field.inputMode ?? 'open'
+      if (mode === 'open') continue
+
+      if (shouldWarnOnPreset(field.type)) {
+        list.push(`「${field.label || field.key}」寫死一個日期／時間，除了固定年度之類的情況通常是錯的`)
+      }
+
+      if (field.type === 'dropdown' && !isPresetEmpty(field.presetValue)) {
+        const items = optionSets.find(os => os.id === field.optionSetId)?.items || []
+        const picked = Array.isArray(field.presetValue) ? field.presetValue : [field.presetValue!]
+        for (const value of picked) {
+          const item = items.find(i => i.value === value)
+          if (!item) {
+            list.push(`「${field.label || field.key}」的預填值「${value}」不在所選的選項清單裡`)
+          } else if (item.status === 'deprecated') {
+            list.push(`「${field.label || field.key}」的預填值「${item.label}」已停用`)
+          }
+        }
+      }
+
+      if (mode === 'locked' && !field.required && isPresetEmpty(field.presetValue)) {
+        list.push(
+          `「${field.label || field.key}」鎖定為空白，每一筆都會是空的；若不需要收集，建議直接移除這個欄位`
+        )
+      }
+    }
+    return list
+  }, [fields, optionSets])
 
   const handleSave = async () => {
     if (problems.length > 0) return
@@ -505,9 +659,58 @@ function FormBuilder() {
                       checked={field.required}
                       onChange={e => updateField(index, { required: e.target.checked })}
                     />
-                    必填
+                    必答（不接受空白）
                   </label>
                 </div>
+
+                {canPresetFieldType(field.type) && (
+                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                    <label className="label mb-2 text-xs">輸入方式</label>
+                    <div className="flex flex-wrap gap-4">
+                      {(
+                        [
+                          ['open', '照常提問'],
+                          ['default', '預填值，可改'],
+                          ['locked', '預填值，鎖定'],
+                        ] as Array<[FieldInputMode, string]>
+                      ).map(([mode, label]) => (
+                        <label
+                          key={mode}
+                          className="flex cursor-pointer items-center gap-2 text-sm"
+                        >
+                          <input
+                            type="radio"
+                            name={`inputMode-${index}`}
+                            className="text-unicorn-600 focus:ring-unicorn-500"
+                            checked={(field.inputMode ?? 'open') === mode}
+                            onChange={() => updateField(index, { inputMode: mode })}
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+
+                    {(field.inputMode ?? 'open') !== 'open' && (
+                      <div className="mt-3">
+                        <label className="label mb-1 text-xs">
+                          預填值
+                          {field.inputMode === 'locked' && !field.required && (
+                            <span className="ml-1 font-normal text-slate-400">
+                              （可留空，代表鎖定為空白）
+                            </span>
+                          )}
+                        </label>
+                        <PresetValueInput
+                          field={field}
+                          options={
+                            optionSets.find(os => os.id === field.optionSetId)?.items || []
+                          }
+                          onChange={value => updateField(index, { presetValue: value })}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <p className="hint">
                   型別：{field.type}
@@ -531,6 +734,15 @@ function FormBuilder() {
           <ul className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
             {problems.map(problem => (
               <li key={problem}>· {problem}</li>
+            ))}
+          </ul>
+        )}
+
+        {problems.length === 0 && warnings.length > 0 && (
+          <ul className="rounded-xl border border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-600">
+            <li className="mb-1 font-medium">提醒（不影響儲存）</li>
+            {warnings.map(warning => (
+              <li key={warning}>· {warning}</li>
             ))}
           </ul>
         )}

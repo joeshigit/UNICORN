@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowLeft, CheckCircle2 } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Lock } from 'lucide-react'
 import { useAuth } from '@/components/auth'
 import { FieldInput } from '@/components/form'
 import { EmptyState, ErrorBanner, PageHeader, Spinner } from '@/components/ui'
@@ -18,6 +18,7 @@ import {
   getUserRole,
   newSubmissionId,
 } from '@/lib/db'
+import { resolveInitialValue } from '@/lib/keys'
 import type { FileInfo, OptionItem, Submission, Template } from '@/types'
 
 function SubmitForm() {
@@ -87,6 +88,9 @@ function SubmitForm() {
       const initial: Record<string, unknown> = {}
       for (const field of found.fields) {
         const previous = source?.[field.key]
+        const multiValue = field.type === 'file' || (field.type === 'dropdown' && field.multiple)
+        const emptyValue: unknown = multiValue ? [] : ''
+
         if (previous !== undefined) {
           if (field.type === 'dropdown' && !field.multiple) {
             initial[field.key] = Array.isArray(previous) ? (previous[0] ?? '') : previous
@@ -95,10 +99,18 @@ function SubmitForm() {
           } else {
             initial[field.key] = previous
           }
-        } else if (field.type === 'file' || (field.type === 'dropdown' && field.multiple)) {
-          initial[field.key] = []
+          continue
+        }
+
+        // 沒有舊值才套預填值。舊值優先是快照語意：更正舊紀錄要沿用原值，
+        // 不能被新版模板的預填值蓋掉。
+        const preset = resolveInitialValue(field, undefined, emptyValue)
+        if (field.type === 'dropdown' && field.multiple) {
+          initial[field.key] = Array.isArray(preset) ? preset : preset ? [preset] : []
+        } else if (field.type === 'dropdown') {
+          initial[field.key] = Array.isArray(preset) ? (preset[0] ?? '') : preset
         } else {
-          initial[field.key] = ''
+          initial[field.key] = preset
         }
       }
       if (source) {
@@ -266,28 +278,42 @@ function SubmitForm() {
         <EmptyState title="這張表格還沒有欄位" />
       ) : (
         <form onSubmit={handleSubmit} className="card space-y-5 p-6">
-          {sortedFields.map(field => (
-            <div key={field.key}>
-              <label className="label mb-1.5">
-                {field.label}
-                {field.required && <span className="ml-1 text-red-500">*</span>}
-              </label>
-              <FieldInput
-                field={field}
-                value={values[field.key]}
-                onChange={value => setValue(field.key, value)}
-                options={field.optionSetId ? optionsBySet[field.optionSetId] || [] : []}
-                error={errors[field.key]}
-                submissionId={draftId}
-                actor={actor}
-              />
-              {errors[field.key] ? (
-                <p className="mt-1 text-sm text-red-600">{errors[field.key]}</p>
-              ) : (
-                field.helpText && <p className="hint mt-1">{field.helpText}</p>
-              )}
-            </div>
-          ))}
+          {/* locked 欄位留在原本的順序位置，只是不能改。欄位順序對應使用者熟悉的
+              資料結構，搬到別處會破壞對照習慣。 */}
+          {sortedFields.map(field => {
+            const locked = field.inputMode === 'locked'
+            return (
+              <div key={field.key}>
+                <label className="label mb-1.5">
+                  {field.label}
+                  {field.required && <span className="ml-1 text-red-500">*</span>}
+                  {locked && (
+                    <Lock
+                      className="ml-1.5 inline h-3 w-3 text-slate-400"
+                      aria-label="此欄位由表格固定"
+                    />
+                  )}
+                </label>
+                <FieldInput
+                  field={field}
+                  value={values[field.key]}
+                  onChange={value => setValue(field.key, value)}
+                  options={field.optionSetId ? optionsBySet[field.optionSetId] || [] : []}
+                  error={errors[field.key]}
+                  submissionId={draftId}
+                  actor={actor}
+                  disabled={locked}
+                />
+                {errors[field.key] ? (
+                  <p className="mt-1 text-sm text-red-600">{errors[field.key]}</p>
+                ) : locked ? (
+                  <p className="hint mt-1">此表格固定為此值{field.helpText ? `　·　${field.helpText}` : ''}</p>
+                ) : (
+                  field.helpText && <p className="hint mt-1">{field.helpText}</p>
+                )}
+              </div>
+            )
+          })}
 
           <div className="border-t border-slate-100 pt-4">
             <button type="submit" className="btn-primary w-full" disabled={saving}>

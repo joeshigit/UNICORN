@@ -13,6 +13,8 @@ interface FieldInputProps {
   error?: string
   submissionId: string
   actor: Actor
+  /** locked 欄位：留在原本的位置但不能改 */
+  disabled?: boolean
 }
 
 export function FieldInput({
@@ -23,6 +25,7 @@ export function FieldInput({
   error,
   submissionId,
   actor,
+  disabled,
 }: FieldInputProps) {
   const cls = `field ${error ? 'field-error' : ''}`
   const placeholder = field.helpText || `輸入${field.label}`
@@ -33,6 +36,7 @@ export function FieldInput({
         <input
           type="number"
           className={cls}
+          disabled={disabled}
           value={value === undefined || value === null ? '' : String(value)}
           placeholder={placeholder}
           onChange={e => onChange(e.target.value === '' ? '' : Number(e.target.value))}
@@ -44,6 +48,7 @@ export function FieldInput({
         <textarea
           className={cls}
           rows={4}
+          disabled={disabled}
           value={(value as string) || ''}
           placeholder={placeholder}
           onChange={e => onChange(e.target.value)}
@@ -55,6 +60,7 @@ export function FieldInput({
         <input
           type="date"
           className={cls}
+          disabled={disabled}
           value={(value as string) || ''}
           onChange={e => onChange(e.target.value)}
         />
@@ -65,6 +71,7 @@ export function FieldInput({
         <input
           type="time"
           className={cls}
+          disabled={disabled}
           value={(value as string) || ''}
           onChange={e => onChange(e.target.value)}
         />
@@ -76,10 +83,12 @@ export function FieldInput({
           value={(value as string) || ''}
           onChange={onChange}
           error={!!error}
+          disabled={disabled}
         />
       )
 
     case 'file':
+      // 檔案欄位不允許 locked（無法預先塞一個檔案），所以不需要處理 disabled
       return (
         <FileUploader
           value={Array.isArray(value) ? (value as FileInfo[]) : []}
@@ -99,18 +108,25 @@ export function FieldInput({
         return (
           <div
             className={`max-h-52 space-y-1 overflow-y-auto rounded-xl border p-2 ${
-              error ? 'border-red-300 bg-red-50' : 'border-slate-300 bg-white'
+              error
+                ? 'border-red-300 bg-red-50'
+                : disabled
+                  ? 'border-slate-200 bg-slate-50'
+                  : 'border-slate-300 bg-white'
             }`}
           >
             {active.length === 0 && <p className="hint px-1 py-2">這個選項池還沒有選項</p>}
             {active.map(option => (
               <label
                 key={option.value}
-                className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-50"
+                className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${
+                  disabled ? 'cursor-not-allowed text-slate-500' : 'cursor-pointer hover:bg-slate-50'
+                }`}
               >
                 <input
                   type="checkbox"
                   className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                  disabled={disabled}
                   checked={selected.includes(option.value)}
                   onChange={e =>
                     onChange(
@@ -128,7 +144,12 @@ export function FieldInput({
       }
 
       return (
-        <select className={cls} value={(value as string) || ''} onChange={e => onChange(e.target.value)}>
+        <select
+          className={cls}
+          disabled={disabled}
+          value={(value as string) || ''}
+          onChange={e => onChange(e.target.value)}
+        >
           <option value="">請選擇…</option>
           {active.map(option => (
             <option key={option.value} value={option.value}>
@@ -144,6 +165,7 @@ export function FieldInput({
         <input
           type="text"
           className={cls}
+          disabled={disabled}
           value={(value as string) || ''}
           placeholder={placeholder}
           onChange={e => onChange(e.target.value)}

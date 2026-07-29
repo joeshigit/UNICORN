@@ -34,9 +34,11 @@ import {
   MODULE_CODE,
   ACTION_CODE,
   MANAGER_GROUP_CODE,
+  canPresetFieldType,
   combinedKey,
   countKey,
   isLegacyDateKey,
+  isPresetEmpty,
 } from './keys'
 import type {
   FieldDefinition,
@@ -335,9 +337,34 @@ export interface TemplateInput {
   fields: FieldDefinition[]
 }
 
+/**
+ * 正規化輸入模式：
+ *  - open（或未設）不存 inputMode 與 presetValue，舊模板保持原樣
+ *  - default 沒有值就降級成 open（不然它跟 open 沒有差別，只是多一個誤導的旗標）
+ *  - locked 沒有值是合法的，代表鎖定為空白
+ *  - 檔案欄位無法預填，一律降級成 open
+ */
+function normalizeInputMode(f: FieldDefinition): Pick<FieldDefinition, 'inputMode' | 'presetValue'> {
+  const mode = f.inputMode ?? 'open'
+  if (mode === 'open' || !canPresetFieldType(f.type)) {
+    return { inputMode: undefined, presetValue: undefined }
+  }
+
+  const empty = isPresetEmpty(f.presetValue)
+  if (mode === 'default' && empty) {
+    return { inputMode: undefined, presetValue: undefined }
+  }
+
+  return {
+    inputMode: mode,
+    presetValue: empty ? undefined : f.presetValue,
+  }
+}
+
 function cleanFields(fields: FieldDefinition[]): FieldDefinition[] {
-  return fields.map((f, i) =>
-    stripUndefined({
+  return fields.map((f, i) => {
+    const { inputMode, presetValue } = normalizeInputMode(f)
+    return stripUndefined({
       key: f.key,
       type: f.type,
       label: f.label.trim(),
@@ -346,8 +373,10 @@ function cleanFields(fields: FieldDefinition[]): FieldDefinition[] {
       helpText: f.helpText?.trim() || undefined,
       optionSetId: f.type === 'dropdown' ? f.optionSetId : undefined,
       multiple: f.type === 'dropdown' && f.multiple ? true : undefined,
+      inputMode,
+      presetValue,
     })
-  )
+  })
 }
 
 export async function createTemplate(input: TemplateInput, userEmail: string): Promise<string> {

@@ -10,7 +10,7 @@
 //   2. optionSet.code   — 每建一個選項池就多一個 dropdown KEY
 // ============================================
 
-import type { FieldType } from '@/types'
+import type { FieldDefinition, FieldType } from '@/types'
 
 export interface FixedKeyMeta {
   type: FieldType
@@ -139,4 +139,74 @@ export function isValidDateValue(value: string): boolean {
 /** HH:mm（澳門本地牆鐘，不存時區） */
 export function isValidTimeValue(value: string): boolean {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value)
+}
+
+// ============================================
+// 🦄 欄位輸入模式
+//
+// required（必答／可選答）與 inputMode（open／default／locked）是兩個正交維度。
+// 八種組合只有一格無效：必答 + locked + 沒有預填值 —— 不接受空白但使用者又不能填，
+// 永遠送不出去。可選答 + locked + 沒有值是有效的，等於「鎖定為空白」。
+// ============================================
+
+/** 檔案欄位無法預先塞一個檔案 */
+export function canPresetFieldType(type: FieldType): boolean {
+  return type !== 'file'
+}
+
+/** 寫死一個日期／時間除了固定年度之類的極少數情況，基本上是 bug */
+export function shouldWarnOnPreset(type: FieldType): boolean {
+  return type === 'date' || type === 'time' || type === 'datetime'
+}
+
+export function isPresetEmpty(value: FieldDefinition['presetValue']): boolean {
+  if (value === undefined || value === null) return true
+  if (Array.isArray(value)) return value.length === 0
+  return String(value).trim() === ''
+}
+
+export interface FieldModeProblem {
+  key: string
+  message: string
+}
+
+/** 建表時的驗證。locked 救不了設定錯誤，所以這一關非過不可。 */
+export function validateFieldMode(field: FieldDefinition): FieldModeProblem | null {
+  const mode = field.inputMode ?? 'open'
+  if (mode === 'open') return null
+
+  if (!canPresetFieldType(field.type)) {
+    return { key: field.key, message: `「${field.label || field.key}」是檔案欄位，不能預填或鎖定` }
+  }
+
+  const empty = isPresetEmpty(field.presetValue)
+
+  if (mode === 'default' && empty) {
+    return { key: field.key, message: `「${field.label || field.key}」設為預設值時必須挑一個值` }
+  }
+
+  if (mode === 'locked' && field.required && empty) {
+    return {
+      key: field.key,
+      message: `「${field.label || field.key}」是必答又鎖定，一定要有值，否則永遠無法送出`,
+    }
+  }
+
+  return null
+}
+
+/**
+ * 取欄位的初始值。舊值一律優先於預填值：更正舊紀錄時要沿用原值（快照語意），
+ * 只有原本沒有這個欄位時才套預填值——例如模板新版加了一個 locked 欄位，
+ * 而使用者正在更正舊版的紀錄。
+ */
+export function resolveInitialValue(
+  field: FieldDefinition,
+  previous: unknown,
+  emptyValue: unknown
+): unknown {
+  if (previous !== undefined) return previous
+  if ((field.inputMode ?? 'open') === 'open') return emptyValue
+  if (isPresetEmpty(field.presetValue)) return emptyValue
+  return field.presetValue
 }
