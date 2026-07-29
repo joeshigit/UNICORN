@@ -768,6 +768,12 @@ async function resolveIsolation(
  * 各組查詢的筆數相加是**上界**：同一筆可能既是自己填的、又屬於自己管的表格，
  * 會被重複計。上界是安全的（相加 ≤ 上限就一定安全），代價是偶爾多擋一次，
  * 使用者再縮小一次月份範圍即可。這不是 bug。
+ *
+ * displayOrder() 必須保留，即使計數不需要排序。
+ * 少了它 Firestore 會自己補 __name__ 當最後的排序鍵，於是要求一組結尾是
+ * __name__ 的索引——和取資料用的那組（結尾是 _submittedAt）不同，等於每種
+ * 等值組合都要多一個索引。加上排序就與取資料共用同一個索引。
+ * 兩個排序欄位每筆都有值，所以不會影響筆數。
  */
 async function countIsolated(
   whereConstraints: QueryConstraint[],
@@ -776,7 +782,7 @@ async function countIsolated(
   let total = 0
   for (const extra of sets) {
     const snap = await getCountFromServer(
-      query(collection(db, 'submissions'), ...extra, ...whereConstraints)
+      query(collection(db, 'submissions'), ...extra, ...whereConstraints, ...displayOrder())
     )
     total += snap.data().count
   }
