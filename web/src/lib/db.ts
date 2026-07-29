@@ -10,6 +10,7 @@
 import {
   collection,
   doc,
+  getCountFromServer,
   getDocFromServer,
   getDocsFromServer,
   setDoc,
@@ -607,9 +608,20 @@ export async function voidSubmission(original: Submission, actor: Actor): Promis
   return voidId
 }
 
+/** 單次顯示上限。超過就擋下，請使用者縮小月份範圍。 */
+export const QUERY_DISPLAY_LIMIT = 500
+
+/** 單次匯出上限 */
+export const EXPORT_HARD_CAP = 20_000
+
 export interface SubmissionQuery {
+  /** 必填：提交月份範圍（YYYY-MM，字典序比較） */
+  fromMonth: string
+  toMonth: string
+  /** 送進 Firestore 的第二個條件 */
   templateId?: string
-  month?: string
+
+  // 以下都是前端精修：作用在已通過閘門、完整取回的集合上
   status?: SubmissionStatus | 'ALL'
   includeSuperseded?: boolean
   /** 對應 _templateModule */
@@ -618,13 +630,12 @@ export interface SubmissionQuery {
   action?: string
   fieldKey?: string
   fieldValue?: string
-  max?: number
 }
 
-export interface SubmissionQueryResult {
-  rows: Submission[]
-  truncated: boolean
-}
+export type SubmissionQueryResult =
+  | { blocked: true; count: number; limit: number }
+  /** count 等於實際顯示的筆數，而且是完整的（不是「目前撈到幾筆」） */
+  | { blocked: false; rows: Submission[]; count: number }
 
 function mapDocs(docs: QueryDocumentSnapshot<DocumentData>[]): Submission[] {
   return docs.map(d => ({ id: d.id, ...d.data() } as Submission))
@@ -638,162 +649,221 @@ function sortBySubmittedAtDesc(rows: Submission[]): Submission[] {
   })
 }
 
-async function fetchIsolationDocs(
-  baseConstraints: QueryConstraint[],
-  userEmail: string,
+/**
+ * 送進 Firestore 的條件。計數與取資料共用同一份，兩處分開寫必定漂移。
+ *
+ * 用 _submittedMonth（YYYY-MM 字串）做範圍而不是 _submittedAt，是為了避開時區：
+ * 那個月份桶在寫入當下就已經按 Asia/Macau 算好了。
+ */
+function rangeConstraints(q: SubmissionQuery): QueryConstraint[] {
+  const constraints: QueryConstraint[] = []
+  if (!q.includeSuperseded) constraints.push(where('_isLatest', '==', true))
+  if (q.templateId) constraints.push(where('_templateId', '==', q.templateId))
+  constraints.push(where('_submittedMonth', '>=', q.fromMonth))
+  constraints.push(where('_submittedMonth', '<=', q.toMonth))
+  return constraints
+}
+
+/** 不等式欄位必須是第一個 orderBy */
+function displayOrder(): QueryConstraint[] {
+  return [orderBy('_submittedMonth', 'asc'), orderBy('_submittedAt', 'desc')]
+}
+
+/**
+ * 每一組回傳值代表一次獨立查詢要額外加上的條件。
+ * Superuser 只需要一次；其他人需要「自己填的」加上「自己管的表格」。
+ *
+ * 擁有者那一組必須用 _submitterUid 而不是 _submitterEmail：
+ * 清單查詢的規則是對「查詢條件推導出的 resource」求值，沒有被條件約束的欄位是
+ * undefined。firestore.rules 的 isOwnerOfRecord() 檢查 _submitterUid，所以查詢
+ * 也必須約束同一個欄位，否則規則判不出擁有者身分而整個查詢被拒。
+ */
+function isolationPlan(
+  q: SubmissionQuery,
+  actor: Actor,
   isSuperuser: boolean,
   managedTemplateIds: string[]
+): QueryConstraint[][] {
+  if (isSuperuser) return [[]]
+
+  const sets: QueryConstraint[][] = [[where('_submitterUid', '==', actor.uid)]]
+
+  if (q.templateId) {
+    // 已指定表格時不能再加 _templateId 的 in 條件（會和 rangeConstraints 的 == 衝突）。
+    // 只要那張表在管理清單內，就多跑一次不限提交者的查詢。
+    if (managedTemplateIds.includes(q.templateId)) sets.push([])
+  } else {
+    for (const batch of chunk(managedTemplateIds, FIRESTORE_IN_LIMIT)) {
+      sets.push([where('_templateId', 'in', batch)])
+    }
+  }
+
+  return sets
+}
+
+async function resolveIsolation(
+  q: SubmissionQuery,
+  actor: Actor,
+  isSuperuser: boolean
+): Promise<QueryConstraint[][]> {
+  if (isSuperuser) return [[]]
+  const role = await getUserRole(actor.email)
+  const managedTemplateIds = await listManagedTemplateIds(role?.groups || [])
+  return isolationPlan(q, actor, isSuperuser, managedTemplateIds)
+}
+
+/**
+ * 各組查詢的筆數相加是**上界**：同一筆可能既是自己填的、又屬於自己管的表格，
+ * 會被重複計。上界是安全的（相加 ≤ 上限就一定安全），代價是偶爾多擋一次，
+ * 使用者再縮小一次月份範圍即可。這不是 bug。
+ */
+async function countIsolated(
+  whereConstraints: QueryConstraint[],
+  sets: QueryConstraint[][]
+): Promise<number> {
+  let total = 0
+  for (const extra of sets) {
+    const snap = await getCountFromServer(
+      query(collection(db, 'submissions'), ...extra, ...whereConstraints)
+    )
+    total += snap.data().count
+  }
+  return total
+}
+
+async function fetchIsolated(
+  whereConstraints: QueryConstraint[],
+  sets: QueryConstraint[][],
+  limit: number
 ): Promise<QueryDocumentSnapshot<DocumentData>[]> {
-  if (isSuperuser) {
-    const snap = await getDocsFromServer(query(collection(db, 'submissions'), ...baseConstraints))
-    return snap.docs
-  }
-
   const merged = new Map<string, QueryDocumentSnapshot<DocumentData>>()
-
-  const ownSnap = await getDocsFromServer(
-    query(
-      collection(db, 'submissions'),
-      where('_submitterEmail', '==', userEmail.toLowerCase()),
-      ...baseConstraints
+  for (const extra of sets) {
+    const snap = await getDocsFromServer(
+      query(
+        collection(db, 'submissions'),
+        ...extra,
+        ...whereConstraints,
+        ...displayOrder(),
+        fsLimit(limit)
+      )
     )
-  )
-  for (const d of ownSnap.docs) merged.set(d.id, d)
-
-  for (const batch of chunk(managedTemplateIds, FIRESTORE_IN_LIMIT)) {
-    const managedSnap = await getDocsFromServer(
-      query(collection(db, 'submissions'), where('_templateId', 'in', batch), ...baseConstraints)
-    )
-    for (const d of managedSnap.docs) merged.set(d.id, d)
+    for (const d of snap.docs) merged.set(d.id, d)
   }
-
   return Array.from(merged.values())
 }
 
-export async function querySubmissions(
-  q: SubmissionQuery = {},
-  userEmail: string,
-  isSuperuser: boolean
-): Promise<SubmissionQueryResult> {
-  const max = q.max ?? 500
-  const fetchLimit = max + 1
-  const status = q.status ?? 'ACTIVE'
-  const hasFieldFilter = !!(q.fieldKey && q.fieldValue)
+async function fetchAllIsolated(
+  whereConstraints: QueryConstraint[],
+  sets: QueryConstraint[][],
+  pageSize: number,
+  hardCap: number
+): Promise<QueryDocumentSnapshot<DocumentData>[]> {
+  const merged = new Map<string, QueryDocumentSnapshot<DocumentData>>()
+  for (const extra of sets) {
+    let last: QueryDocumentSnapshot<DocumentData> | null = null
+    for (;;) {
+      const constraints: QueryConstraint[] = [
+        ...extra,
+        ...whereConstraints,
+        ...displayOrder(),
+        fsLimit(pageSize),
+      ]
+      if (last) constraints.push(startAfter(last))
 
-  let managedTemplateIds: string[] = []
-  if (!isSuperuser) {
-    const role = await getUserRole(userEmail)
-    managedTemplateIds = await listManagedTemplateIds(role?.groups || [])
-  }
-
-  let rows: Submission[]
-
-  if (hasFieldFilter) {
-    const exactDocs = await fetchIsolationDocs(
-      [where(q.fieldKey!, '==', q.fieldValue!), fsLimit(fetchLimit)],
-      userEmail,
-      isSuperuser,
-      managedTemplateIds
-    )
-    const containsDocs = await fetchIsolationDocs(
-      [where(q.fieldKey!, 'array-contains', q.fieldValue!), fsLimit(fetchLimit)],
-      userEmail,
-      isSuperuser,
-      managedTemplateIds
-    )
-    const merged = new Map<string, Submission>()
-    for (const d of [...exactDocs, ...containsDocs]) {
-      merged.set(d.id, { id: d.id, ...d.data() } as Submission)
+      const snap = await getDocsFromServer(query(collection(db, 'submissions'), ...constraints))
+      if (snap.empty) break
+      for (const d of snap.docs) merged.set(d.id, d)
+      last = snap.docs[snap.docs.length - 1]
+      if (snap.docs.length < pageSize) break
+      if (merged.size >= hardCap) break
     }
-    rows = Array.from(merged.values())
-  } else {
-    const constraints: QueryConstraint[] = []
-    if (!q.includeSuperseded) constraints.push(where('_isLatest', '==', true))
-    if (q.templateId) constraints.push(where('_templateId', '==', q.templateId))
-    if (q.month) constraints.push(where('_submittedMonth', '==', q.month))
-    if (q.module) constraints.push(where('_templateModule', '==', q.module))
-    if (q.action) constraints.push(where('_templateAction', '==', q.action))
-    constraints.push(orderBy('_submittedAt', 'desc'), fsLimit(fetchLimit))
-
-    const docs = await fetchIsolationDocs(constraints, userEmail, isSuperuser, managedTemplateIds)
-    rows = mapDocs(docs)
   }
-
-  if (hasFieldFilter) {
-    if (!q.includeSuperseded) rows = rows.filter(r => r._isLatest === true)
-    if (q.templateId) rows = rows.filter(r => r._templateId === q.templateId)
-    if (q.month) rows = rows.filter(r => r._submittedMonth === q.month)
-    if (q.module) rows = rows.filter(r => r._templateModule === q.module)
-    if (q.action) rows = rows.filter(r => r._templateAction === q.action)
-  }
-
-  if (status !== 'ALL') rows = rows.filter(r => r._status === status)
-
-  rows = sortBySubmittedAtDesc(rows)
-  const truncated = rows.length > max
-  if (truncated) rows = rows.slice(0, max)
-
-  return { rows, truncated }
+  return Array.from(merged.values())
 }
 
-/** 分頁完整匯出：不靜默停在 500 */
+function matchesFieldValue(raw: unknown, wanted: string): boolean {
+  if (Array.isArray(raw)) return raw.some(v => String(v) === wanted)
+  if (raw === undefined || raw === null) return false
+  return String(raw) === wanted
+}
+
+/** 前端精修。作用在完整集合上，所以結果仍然完整。 */
+function applyLocalFilters(rows: Submission[], q: SubmissionQuery): Submission[] {
+  let out = rows
+  if (q.module) out = out.filter(r => r._templateModule === q.module)
+  if (q.action) out = out.filter(r => r._templateAction === q.action)
+
+  const status = q.status ?? 'ACTIVE'
+  if (status !== 'ALL') out = out.filter(r => r._status === status)
+
+  if (q.fieldKey && q.fieldValue) {
+    out = out.filter(r => matchesFieldValue(r[q.fieldKey!], q.fieldValue!))
+  }
+  return out
+}
+
+function assertMonthRange(q: SubmissionQuery, action: string): void {
+  if (!q.fromMonth || !q.toMonth) throw new Error(`${action}必須指定提交月份範圍`)
+  if (q.fromMonth > q.toMonth) throw new Error('月份範圍的起始不能晚於結束')
+}
+
+/** 先算筆數再決定要不要查。超過上限就完全不撈資料。 */
+export async function countSubmissions(
+  q: SubmissionQuery,
+  actor: Actor,
+  isSuperuser: boolean
+): Promise<number> {
+  assertMonthRange(q, '查詢')
+  const sets = await resolveIsolation(q, actor, isSuperuser)
+  return countIsolated(rangeConstraints(q), sets)
+}
+
+export async function querySubmissions(
+  q: SubmissionQuery,
+  actor: Actor,
+  isSuperuser: boolean
+): Promise<SubmissionQueryResult> {
+  assertMonthRange(q, '查詢')
+
+  const sets = await resolveIsolation(q, actor, isSuperuser)
+  const whereConstraints = rangeConstraints(q)
+
+  // 閘門：超過上限就不取資料，省下數百次文件讀取
+  const count = await countIsolated(whereConstraints, sets)
+  if (count > QUERY_DISPLAY_LIMIT) {
+    return { blocked: true, count, limit: QUERY_DISPLAY_LIMIT }
+  }
+
+  const docs = await fetchIsolated(whereConstraints, sets, QUERY_DISPLAY_LIMIT)
+  const rows = sortBySubmittedAtDesc(applyLocalFilters(mapDocs(docs), q))
+
+  return { blocked: false, rows, count: rows.length }
+}
+
+/**
+ * 完整匯出：不套用顯示上限，走 cursor 分頁把整個月份範圍取完。
+ * 這是筆數超過顯示上限時的正式出口。
+ */
 export async function exportAllSubmissions(
-  q: SubmissionQuery = {},
-  userEmail: string,
+  q: SubmissionQuery,
+  actor: Actor,
   isSuperuser: boolean,
   pageSize = 500
 ): Promise<Submission[]> {
-  const all: Submission[] = []
-  let page = 0
-  const hardCap = 50_000
+  assertMonthRange(q, '匯出')
 
-  // 非 Superuser 仍走 isolation 合併路徑（無法用單一 cursor）；分批提高 max
-  if (!isSuperuser) {
-    let cursorMax = pageSize
-    while (cursorMax <= hardCap) {
-      const { rows, truncated } = await querySubmissions(
-        { ...q, max: cursorMax },
-        userEmail,
-        isSuperuser
-      )
-      if (!truncated) return rows
-      cursorMax *= 2
-    }
-    throw new Error('匯出筆數超過上限，請縮小篩選條件')
+  const sets = await resolveIsolation(q, actor, isSuperuser)
+  const whereConstraints = rangeConstraints(q)
+
+  const count = await countIsolated(whereConstraints, sets)
+  if (count > EXPORT_HARD_CAP) {
+    throw new Error(
+      `這個範圍有 ${count} 筆，超過單次匯出上限 ${EXPORT_HARD_CAP} 筆，請縮小月份範圍`
+    )
   }
 
-  // Superuser：真正 cursor 分頁
-  let last: QueryDocumentSnapshot<DocumentData> | null = null
-  while (all.length < hardCap) {
-    const constraints: QueryConstraint[] = []
-    if (!q.includeSuperseded) constraints.push(where('_isLatest', '==', true))
-    if (q.templateId) constraints.push(where('_templateId', '==', q.templateId))
-    if (q.month) constraints.push(where('_submittedMonth', '==', q.month))
-    if (q.module) constraints.push(where('_templateModule', '==', q.module))
-    if (q.action) constraints.push(where('_templateAction', '==', q.action))
-    if (q.status && q.status !== 'ALL') constraints.push(where('_status', '==', q.status))
-    constraints.push(orderBy('_submittedAt', 'desc'), fsLimit(pageSize))
-    if (last) constraints.push(startAfter(last))
-
-    const snap = await getDocsFromServer(query(collection(db, 'submissions'), ...constraints))
-    if (snap.empty) break
-
-    let batch = mapDocs(snap.docs)
-    if (q.fieldKey && q.fieldValue) {
-      batch = batch.filter(r => {
-        const raw = r[q.fieldKey!]
-        if (Array.isArray(raw)) return raw.includes(q.fieldValue!)
-        return raw === q.fieldValue
-      })
-    }
-    all.push(...batch)
-    last = snap.docs[snap.docs.length - 1]
-    page += 1
-    if (snap.docs.length < pageSize) break
-    if (page > 200) break
-  }
-
-  return sortBySubmittedAtDesc(all)
+  const docs = await fetchAllIsolated(whereConstraints, sets, pageSize, EXPORT_HARD_CAP)
+  return sortBySubmittedAtDesc(applyLocalFilters(mapDocs(docs), q))
 }
 
 export async function getSubmission(id: string): Promise<Submission | null> {
@@ -808,4 +878,12 @@ export function recentMonths(count = 18): string[] {
     out.push(currentMonth(new Date(now.getFullYear(), now.getMonth() - i, 15)))
   }
   return out
+}
+
+/** 月份快捷範圍。offset 0 = 本月、1 = 上月；span 為往前涵蓋幾個月。 */
+export function monthRange(offset = 0, span = 1): { fromMonth: string; toMonth: string } {
+  const now = new Date()
+  const to = currentMonth(new Date(now.getFullYear(), now.getMonth() - offset, 15))
+  const from = currentMonth(new Date(now.getFullYear(), now.getMonth() - offset - (span - 1), 15))
+  return { fromMonth: from, toMonth: to }
 }

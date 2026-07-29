@@ -93,10 +93,18 @@ service cloud.firestore {
       return templateExists(templateId) && canFillTemplateData(getTemplate(templateId));
     }
 
+    // 清單／聚合查詢的規則是對「查詢條件推導出的 resource」求值，沒有被條件約束的
+    // 欄位是 undefined。所以清單查詢必須用 _submitterUid 過濾才判得出擁有者身分。
     function isOwnerOfRecord() {
       return isOrgUser()
         && resource.data.keys().hasAll(['_submitterUid'])
         && resource.data._submitterUid == request.auth.uid;
+    }
+
+    // 未約束 _templateId 的清單查詢應該乾淨地被拒，而不是丟出
+    // 「Property _templateId is undefined」這種難懂的錯誤
+    function recordHasTemplateId() {
+      return resource.data.keys().hasAll(['_templateId']);
     }
 
     function submissionPath(id) {
@@ -219,7 +227,7 @@ service cloud.firestore {
     match /submissions/{submissionId} {
       allow read: if isSuperuser()
         || isOwnerOfRecord()
-        || isManagerOfForm(resource.data._templateId);
+        || (recordHasTemplateId() && isManagerOfForm(resource.data._templateId));
 
       allow create: if isOrgUser()
         && requiredCreateFields()

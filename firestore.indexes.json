@@ -65,7 +65,8 @@
       "collectionGroup": "submissions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "_submitterEmail", "order": "ASCENDING" },
+        { "fieldPath": "_submitterUid", "order": "ASCENDING" },
+        { "fieldPath": "_submittedMonth", "order": "ASCENDING" },
         { "fieldPath": "_submittedAt", "order": "DESCENDING" }
       ]
     },
@@ -73,8 +74,9 @@
       "collectionGroup": "submissions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "_submitterEmail", "order": "ASCENDING" },
+        { "fieldPath": "_submitterUid", "order": "ASCENDING" },
         { "fieldPath": "_isLatest", "order": "ASCENDING" },
+        { "fieldPath": "_submittedMonth", "order": "ASCENDING" },
         { "fieldPath": "_submittedAt", "order": "DESCENDING" }
       ]
     },
@@ -82,18 +84,19 @@
       "collectionGroup": "submissions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "_submitterEmail", "order": "ASCENDING" },
+        { "fieldPath": "_submitterUid", "order": "ASCENDING" },
+        { "fieldPath": "_templateId", "order": "ASCENDING" },
+        { "fieldPath": "_submittedMonth", "order": "ASCENDING" },
+        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "_submitterUid", "order": "ASCENDING" },
         { "fieldPath": "_isLatest", "order": "ASCENDING" },
         { "fieldPath": "_templateId", "order": "ASCENDING" },
-        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "submissions",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "_submitterEmail", "order": "ASCENDING" },
-        { "fieldPath": "_isLatest", "order": "ASCENDING" },
         { "fieldPath": "_submittedMonth", "order": "ASCENDING" },
         { "fieldPath": "_submittedAt", "order": "DESCENDING" }
       ]
@@ -142,6 +145,36 @@
         { "fieldPath": "_submitterEmail", "order": "ASCENDING" },
         { "fieldPath": "_isLatest", "order": "ASCENDING" },
         { "fieldPath": "_templateModule", "order": "ASCENDING" },
+        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "_submitterEmail", "order": "ASCENDING" },
+        { "fieldPath": "_submittedMonth", "order": "ASCENDING" },
+        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "_submitterEmail", "order": "ASCENDING" },
+        { "fieldPath": "_templateId", "order": "ASCENDING" },
+        { "fieldPath": "_submittedMonth", "order": "ASCENDING" },
+        { "fieldPath": "_submittedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "_submitterEmail", "order": "ASCENDING" },
+        { "fieldPath": "_isLatest", "order": "ASCENDING" },
+        { "fieldPath": "_templateId", "order": "ASCENDING" },
+        { "fieldPath": "_submittedMonth", "order": "ASCENDING" },
         { "fieldPath": "_submittedAt", "order": "DESCENDING" }
       ]
     },

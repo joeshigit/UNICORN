@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { Download, Filter, RefreshCw } from 'lucide-react'
+import { CalendarRange, Download, Filter, RefreshCw, SlidersHorizontal } from 'lucide-react'
 import { useAuth } from '@/components/auth'
 import { EmptyState, ErrorBanner, PageHeader, Spinner, StatusChip } from '@/components/ui'
 import { SubmissionDetail } from '@/components/SubmissionDetail'
@@ -11,10 +11,12 @@ import {
   exportAllSubmissions,
   listOptionSets,
   listTemplates,
+  monthRange,
   querySubmissions,
   recentMonths,
   toDate,
 } from '@/lib/db'
+import type { SubmissionQuery } from '@/lib/db'
 import { ACTION_CODE, MODULE_CODE, NON_SUBMISSION_QUERY_CODES, combinedKey, countKey } from '@/lib/keys'
 import { downloadCsv, toCsv } from '@/lib/csv'
 import type { OptionSet, Submission, SubmissionStatus, Template } from '@/types'
@@ -35,6 +37,11 @@ function formatSubmittedAt(submission: Submission): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+interface BlockedInfo {
+  count: number
+  limit: number
+}
+
 function DataPool() {
   const params = useSearchParams()
   const { email, uid, isSuperuser } = useAuth()
@@ -42,14 +49,21 @@ function DataPool() {
   const [templates, setTemplates] = useState<Template[]>([])
   const [optionSets, setOptionSets] = useState<OptionSet[]>([])
   const [rows, setRows] = useState<Submission[]>([])
-  const [truncated, setTruncated] = useState(false)
+  const [blocked, setBlocked] = useState<BlockedInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
   const [selected, setSelected] = useState<Submission | null>(null)
 
+  // 第一個條件：提交月份範圍，必填，預設當月
+  const initialRange = useMemo(() => monthRange(0, 1), [])
+  const [fromMonth, setFromMonth] = useState(initialRange.fromMonth)
+  const [toMonth, setToMonth] = useState(initialRange.toMonth)
+
+  // 第二個條件：表格
   const [templateId, setTemplateId] = useState(params.get('form') || '')
-  const [month, setMonth] = useState('')
+
+  // 以下都是前端精修
   const [status, setStatus] = useState<SubmissionStatus | 'ALL'>('ACTIVE')
   const [moduleFilter, setModuleFilter] = useState('')
   const [actionFilter, setActionFilter] = useState('')
@@ -57,6 +71,8 @@ function DataPool() {
   const [fieldValue, setFieldValue] = useState('')
   const [includeSuperseded, setIncludeSuperseded] = useState(false)
   const [withDerived, setWithDerived] = useState(false)
+
+  const months = useMemo(() => recentMonths(36), [])
 
   useEffect(() => {
     Promise.all([listTemplates(), listOptionSets()])
@@ -67,10 +83,11 @@ function DataPool() {
       .catch(err => setError(err instanceof Error ? err.message : '載入失敗'))
   }, [])
 
-  const queryInput = useMemo(
+  const queryInput = useMemo<SubmissionQuery>(
     () => ({
+      fromMonth,
+      toMonth,
       templateId: templateId || undefined,
-      month: month || undefined,
       status,
       includeSuperseded,
       module: moduleFilter || undefined,
@@ -78,26 +95,49 @@ function DataPool() {
       fieldKey: fieldKey || undefined,
       fieldValue: fieldKey && fieldValue ? fieldValue : undefined,
     }),
-    [templateId, month, status, includeSuperseded, moduleFilter, actionFilter, fieldKey, fieldValue]
+    [
+      fromMonth,
+      toMonth,
+      templateId,
+      status,
+      includeSuperseded,
+      moduleFilter,
+      actionFilter,
+      fieldKey,
+      fieldValue,
+    ]
   )
+
+  const actor = useMemo(() => ({ uid, email }), [uid, email])
 
   const runQuery = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const result = await querySubmissions(queryInput, email, isSuperuser)
-      setRows(result.rows)
-      setTruncated(result.truncated)
+      const result = await querySubmissions(queryInput, actor, isSuperuser)
+      if (result.blocked) {
+        setBlocked({ count: result.count, limit: result.limit })
+        setRows([])
+      } else {
+        setBlocked(null)
+        setRows(result.rows)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '查詢失敗')
     } finally {
       setLoading(false)
     }
-  }, [queryInput, email, isSuperuser])
+  }, [queryInput, actor, isSuperuser])
 
   useEffect(() => {
-    runQuery()
-  }, [runQuery])
+    if (uid && email) runQuery()
+  }, [runQuery, uid, email])
+
+  const applyQuickRange = (offset: number, span: number) => {
+    const next = monthRange(offset, span)
+    setFromMonth(next.fromMonth)
+    setToMonth(next.toMonth)
+  }
 
   const activeTemplate = templates.find(t => t.id === templateId) || null
 
@@ -193,16 +233,20 @@ function DataPool() {
     })
 
     const name = activeTemplate ? activeTemplate.name : 'unicorn'
-    downloadCsv(`${name}_${new Date().toISOString().slice(0, 10)}.csv`, toCsv(headers, data))
+    const stamp = fromMonth === toMonth ? fromMonth : `${fromMonth}_${toMonth}`
+    downloadCsv(`${name}_${stamp}.csv`, toCsv(headers, data))
   }
 
   const handleExport = async () => {
     setExporting(true)
     setError('')
     try {
-      const all = truncated
-        ? await exportAllSubmissions(queryInput, email, isSuperuser)
-        : rows
+      // 匯出不套用顯示上限，走 cursor 分頁把整個範圍取完
+      const all = await exportAllSubmissions(queryInput, actor, isSuperuser)
+      if (all.length === 0) {
+        setError('這個條件沒有可匯出的資料')
+        return
+      }
       buildCsv(all)
     } catch (err) {
       setError(err instanceof Error ? err.message : '匯出失敗')
@@ -211,181 +255,236 @@ function DataPool() {
     }
   }
 
-  const actor = useMemo(() => ({ uid, email }), [uid, email])
+  const rangeLabel = fromMonth === toMonth ? fromMonth : `${fromMonth} ～ ${toMonth}`
 
   return (
     <>
       <PageHeader
         title="資料池"
-        description="所有表格的提交都在同一個 submissions 池，用 Universal KEY 跨表查詢"
+        description="先選提交月份範圍，再選表格。其餘條件是在取回的範圍內精修。"
         actions={
           <>
             <button className="btn-secondary" onClick={runQuery}>
               <RefreshCw className="h-4 w-4" />
               重新查詢
             </button>
-            <button
-              className="btn-primary"
-              onClick={handleExport}
-              disabled={rows.length === 0 || exporting}
-            >
+            <button className="btn-primary" onClick={handleExport} disabled={exporting}>
               <Download className="h-4 w-4" />
-              {exporting ? '匯出中…' : truncated ? '完整匯出 CSV' : '匯出 CSV'}
+              {exporting ? '匯出中…' : '完整匯出 CSV'}
             </button>
           </>
         }
       />
 
       {error && <ErrorBanner message={error} />}
-      {truncated && (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          畫面只顯示前 {rows.length} 筆（已達上限）。請縮小篩選，或按「完整匯出 CSV」取得全部資料。
+
+      <div className="card mb-5 divide-y divide-slate-100">
+        <div className="p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-600">
+            <CalendarRange className="h-4 w-4" />
+            提交月份範圍（必填）
+          </div>
+
+          <div className="mb-3 flex flex-wrap gap-2">
+            <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(0, 1)}>
+              本月
+            </button>
+            <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(1, 1)}>
+              上月
+            </button>
+            <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(0, 3)}>
+              近三個月
+            </button>
+            <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(0, 12)}>
+              近十二個月
+            </button>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className="label mb-1">起</label>
+              <select className="field" value={fromMonth} onChange={e => setFromMonth(e.target.value)}>
+                {months.map(m => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label mb-1">迄</label>
+              <select className="field" value={toMonth} onChange={e => setToMonth(e.target.value)}>
+                {months.map(m => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label mb-1">表格</label>
+              <select className="field" value={templateId} onChange={e => setTemplateId(e.target.value)}>
+                <option value="">全部表格</option>
+                {templates.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {fromMonth > toMonth && (
+            <p className="mt-2 text-sm text-red-600">起始月份不能晚於結束月份。</p>
+          )}
         </div>
-      )}
 
-      <div className="card mb-5 p-4">
-        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-600">
-          <Filter className="h-4 w-4" />
-          篩選
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div>
-            <label className="label mb-1">表格</label>
-            <select className="field" value={templateId} onChange={e => setTemplateId(e.target.value)}>
-              <option value="">全部表格</option>
-              {templates.map(t => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
+        <div className="p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-600">
+            <SlidersHorizontal className="h-4 w-4" />
+            在這個範圍內精修
+            <span className="hint font-normal">（不影響取回的資料量）</span>
           </div>
 
-          <div>
-            <label className="label mb-1">分類 module</label>
-            <select
-              className="field"
-              value={moduleFilter}
-              onChange={e => setModuleFilter(e.target.value)}
-            >
-              <option value="">全部</option>
-              {moduleChoices.map(item => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div>
+              <label className="label mb-1">分類 module</label>
+              <select
+                className="field"
+                value={moduleFilter}
+                onChange={e => setModuleFilter(e.target.value)}
+              >
+                <option value="">全部</option>
+                {moduleChoices.map(item => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div>
-            <label className="label mb-1">動作 action</label>
-            <select
-              className="field"
-              value={actionFilter}
-              onChange={e => setActionFilter(e.target.value)}
-            >
-              <option value="">全部</option>
-              {actionChoices.map(item => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div>
+              <label className="label mb-1">動作 action</label>
+              <select
+                className="field"
+                value={actionFilter}
+                onChange={e => setActionFilter(e.target.value)}
+              >
+                <option value="">全部</option>
+                {actionChoices.map(item => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div>
-            <label className="label mb-1">月份</label>
-            <select className="field" value={month} onChange={e => setMonth(e.target.value)}>
-              <option value="">全部月份</option>
-              {recentMonths().map(m => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div>
+              <label className="label mb-1">狀態</label>
+              <select
+                className="field"
+                value={status}
+                onChange={e => setStatus(e.target.value as SubmissionStatus | 'ALL')}
+              >
+                <option value="ACTIVE">有效</option>
+                <option value="VOID">已作廢</option>
+                <option value="ALL">全部</option>
+              </select>
+            </div>
 
-          <div>
-            <label className="label mb-1">狀態</label>
-            <select
-              className="field"
-              value={status}
-              onChange={e => setStatus(e.target.value as SubmissionStatus | 'ALL')}
-            >
-              <option value="ACTIVE">有效</option>
-              <option value="VOID">已作廢</option>
-              <option value="ALL">全部</option>
-            </select>
-          </div>
+            <div>
+              <label className="label mb-1">跨表 KEY</label>
+              <select
+                className="field"
+                value={fieldKey}
+                onChange={e => {
+                  setFieldKey(e.target.value)
+                  setFieldValue('')
+                }}
+              >
+                <option value="">不使用</option>
+                {keyChoices.map(k => (
+                  <option key={k.code} value={k.code}>
+                    {k.code}（{k.name}）
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div>
-            <label className="label mb-1">跨表 KEY</label>
-            <select
-              className="field"
-              value={fieldKey}
-              onChange={e => {
-                setFieldKey(e.target.value)
-                setFieldValue('')
-              }}
-            >
-              <option value="">不使用</option>
-              {keyChoices.map(k => (
-                <option key={k.code} value={k.code}>
-                  {k.code}（{k.name}）
-                </option>
-              ))}
-            </select>
-          </div>
+            <div>
+              <label className="label mb-1">KEY 的值</label>
+              <select
+                className="field"
+                value={fieldValue}
+                disabled={!selectedKeyChoice}
+                onChange={e => setFieldValue(e.target.value)}
+              >
+                <option value="">全部</option>
+                {selectedKeyChoice?.values.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div>
-            <label className="label mb-1">KEY 的值</label>
-            <select
-              className="field"
-              value={fieldValue}
-              disabled={!selectedKeyChoice}
-              onChange={e => setFieldValue(e.target.value)}
-            >
-              <option value="">全部</option>
-              {selectedKeyChoice?.values.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col justify-end gap-2 pb-1.5">
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
-              <input
-                type="checkbox"
-                className="rounded text-unicorn-600 focus:ring-unicorn-500"
-                checked={includeSuperseded}
-                onChange={e => setIncludeSuperseded(e.target.checked)}
-              />
-              連被更正的舊版本一起看
-            </label>
-            <label
-              className="flex cursor-pointer items-center gap-2 text-sm text-slate-600"
-              title="下拉欄位除了顯示值，另外帶出組合字串與選了幾個，方便做樞紐分析"
-            >
-              <input
-                type="checkbox"
-                className="rounded text-unicorn-600 focus:ring-unicorn-500"
-                checked={withDerived}
-                onChange={e => setWithDerived(e.target.checked)}
-              />
-              匯出時帶出組合值與數量
-            </label>
+            <div className="flex flex-col justify-end gap-2 pb-1.5">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                  checked={includeSuperseded}
+                  onChange={e => setIncludeSuperseded(e.target.checked)}
+                />
+                連被更正的舊版本一起看
+              </label>
+              <label
+                className="flex cursor-pointer items-center gap-2 text-sm text-slate-600"
+                title="下拉欄位除了顯示值，另外帶出組合字串與選了幾個，方便做樞紐分析"
+              >
+                <input
+                  type="checkbox"
+                  className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                  checked={withDerived}
+                  onChange={e => setWithDerived(e.target.checked)}
+                />
+                匯出時帶出組合值與數量
+              </label>
+            </div>
           </div>
         </div>
       </div>
 
       {loading ? (
         <Spinner label="查詢中" />
+      ) : blocked ? (
+        <div className="card p-6">
+          <div className="flex items-start gap-3">
+            <Filter className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+            <div>
+              <h2 className="font-semibold">範圍太大，尚未取回資料</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {rangeLabel} 這個範圍符合 <strong>{blocked.count}</strong> 筆，超過單次顯示上限{' '}
+                {blocked.limit} 筆。
+              </p>
+              <p className="mt-2 text-sm text-slate-500">
+                請縮小月份範圍或指定表格後再查；若要取得全部資料，請按上方「完整匯出 CSV」。
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(0, 1)}>
+                  改成只看本月
+                </button>
+                <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(1, 1)}>
+                  改成只看上月
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       ) : rows.length === 0 ? (
         <EmptyState
-          title="沒有符合條件的資料"
-          description="換個篩選條件，或先去填一筆看看。"
+          title="這個範圍沒有符合條件的資料"
+          description="換個月份範圍或精修條件，或先去填一筆看看。"
           action={
             <Link href="/fill" className="btn-primary">
               去填報
@@ -438,7 +537,7 @@ function DataPool() {
             </table>
           </div>
           <div className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
-            共 {rows.length} 筆{truncated ? '（已截斷）' : ''}
+            {rangeLabel} 共 {rows.length} 筆（完整）
           </div>
         </div>
       )}
