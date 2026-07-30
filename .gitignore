@@ -10,6 +10,7 @@ build/
 dist/
 /lib/
 functions/lib/
+functions/shared/
 
 # Environment files
 .env

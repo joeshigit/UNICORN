@@ -2,7 +2,8 @@
   "name": "unicorn-dcs-functions",
   "description": "Unicorn DataCaptureSystem Cloud Functions",
   "scripts": {
-    "build": "tsc",
+    "prebuild": "mkdir -p shared && cp ../shared/universalKeyValidation.mjs shared/universalKeyValidation.mjs",
+    "build": "npm run prebuild && tsc",
     "build:watch": "tsc --watch",
     "serve": "npm run build && firebase emulators:start --only functions",
     "shell": "npm run build && firebase functions:shell",

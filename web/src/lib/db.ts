@@ -44,6 +44,8 @@ import {
   validateScaleValueLabels,
   validateStandardKeyCode,
   validateTypeValueModel,
+  validateOptionSetCode,
+  isSystemReservedCode,
   usesOptionSet,
   usesThreeShape,
 } from './keys'
@@ -372,6 +374,14 @@ export async function updateStandardKey(id: string, input: StandardKeyUpdateInpu
 }
 
 export async function createOptionSet(input: OptionSetInput, userEmail: string): Promise<string> {
+  if (input.isMaster !== false) {
+    const codeErr = validateOptionSetCode(input.code)
+    if (codeErr) throw new Error(codeErr)
+  }
+  return writeOptionSetDoc(input, userEmail)
+}
+
+async function writeOptionSetDoc(input: OptionSetInput, userEmail: string): Promise<string> {
   const id = newId('optionSets')
   await setDoc(
     doc(db, 'optionSets', id),
@@ -388,6 +398,19 @@ export async function createOptionSet(input: OptionSetInput, userEmail: string):
     })
   )
   return id
+}
+
+/** 僅 ensureCoreOptionSets 內部使用；不 export，不可被任意 caller 濫用 */
+async function seedSystemReservedOptionSet(
+  input: OptionSetInput,
+  userEmail: string
+): Promise<string> {
+  const code = input.code.trim()
+  if (!isSystemReservedCode(code)) {
+    throw new Error('Internal: system seed only for reserved codes')
+  }
+  if (!input.isMaster) throw new Error('Internal: system reserved option sets must be master')
+  return writeOptionSetDoc(input, userEmail)
 }
 
 export async function updateOptionSet(
@@ -447,7 +470,7 @@ export async function ensureCoreOptionSets(userEmail: string): Promise<void> {
 
   for (const seed of seeds) {
     if (codes.has(seed.code)) continue
-    await createOptionSet(
+    await seedSystemReservedOptionSet(
       {
         code: seed.code,
         name: seed.name,

@@ -18,6 +18,7 @@ import type {
   StandardKey,
   StandardValueModel,
 } from '@/types'
+import { canonicalKeyViolation } from './universalKeyValidation'
 
 export interface FixedKeyMeta {
   type: FieldType
@@ -192,11 +193,11 @@ export function validateTypeValueModel(type: FieldType, valueModel: StandardValu
   return null
 }
 
-/** 與 optionSet code 相同規則，另禁 reserved codes */
+/** optionSet.code 與 standardKeys.key 共用同一套 L1+L2 格式；standard 另禁 reserved */
 export function validateStandardKeyCode(code: string): string | null {
-  const base = validateOptionSetCode(code)
+  const base = validateUniversalKeyCode(code)
   if (base) return base
-  if ((RESERVED_CODES as readonly string[]).includes(code)) {
+  if (isSystemReservedCode(code)) {
     return `「${code}」是系統保留 KEY，不能當作標準問題`
   }
   return null
@@ -390,18 +391,53 @@ export const RESERVED_CODES = [MODULE_CODE, ACTION_CODE, MANAGER_GROUP_CODE]
 /** 這些 code 不可當一般跨表 KEY 篩選（是模板維度或 ACL） */
 export const NON_SUBMISSION_QUERY_CODES = [MODULE_CODE, ACTION_CODE, MANAGER_GROUP_CODE]
 
-// 選項池的 code 就是 dropdown 欄位的 KEY，必須是安全的識別字
-export function validateOptionSetCode(code: string): string | null {
-  if (!code.trim()) return '請輸入 KEY'
-  if (!/^[a-z][a-zA-Z0-9]*$/.test(code)) {
-    return 'KEY 只能用英文字母與數字，且必須小寫開頭（例：school、costCenter）'
+export function isSystemReservedCode(code: string): boolean {
+  return (RESERVED_CODES as readonly string[]).includes(code)
+}
+
+function formatCanonicalKeyError(code: string, violation: ReturnType<typeof canonicalKeyViolation>): string | null {
+  if (!violation) return null
+  switch (violation) {
+    case 'empty':
+      return '請輸入 KEY'
+    case 'whitelist_format':
+      return `白名單 KEY「${code}」格式不正確`
+    case 'prefixed_invalid_tail':
+      return '分類前綴後須用 camelCase（例：demo_chineseName），不可再用底線'
+    case 'snake_case':
+      return '請用 demo_chineseName 格式，不是 demo_chinese_name'
+    case 'camel_without_prefix':
+      return '須加分類前綴（例：demo_chineseName）或使用 PO 白名單內的前綴例外 KEY'
+    case 'bare_semantic':
+      return `「${code}」語意過廣，請改用分類前綴（例：demo_chineseName、demo_phone）`
+    case 'unprefixed_not_whitelisted':
+      return '新建 KEY 須用分類前綴（例：demo_chineseName）或 PO 白名單內的前綴例外（目前僅 school）'
+    default:
+      return 'KEY 格式不符合命名規範'
   }
-  if (isFixedKey(code)) return `「${code}」已經是系統固定 KEY，請換一個`
-  if (isDerivedKey(code)) {
+}
+
+/** L1 canonical format + L2 policy（不含 system reserved；由呼叫端另判） */
+function validateUniversalKeyCode(code: string): string | null {
+  const trimmed = code.trim()
+  const formatErr = formatCanonicalKeyError(trimmed, canonicalKeyViolation(trimmed))
+  if (formatErr) return formatErr
+  if (isFixedKey(trimmed)) return `「${trimmed}」已經是系統固定 KEY，請換一個`
+  if (isDerivedKey(trimmed)) {
     return `KEY 不能用 ${DERIVED_SUFFIXES.join(' / ')} 結尾，這些是系統自動產生的欄位`
   }
-  if (isLegacyDateKey(code)) {
-    return `「${code}」已退役，請改用語意化日期／時間 KEY`
+  if (isLegacyDateKey(trimmed)) {
+    return `「${trimmed}」已退役，請改用語意化日期／時間 KEY`
+  }
+  return null
+}
+
+// 選項池的 code 就是 dropdown 欄位的 KEY
+export function validateOptionSetCode(code: string): string | null {
+  const base = validateUniversalKeyCode(code)
+  if (base) return base
+  if (isSystemReservedCode(code.trim())) {
+    return `「${code.trim()}」是系統保留 KEY，不能當作一般業務 KEY 新建`
   }
   return null
 }

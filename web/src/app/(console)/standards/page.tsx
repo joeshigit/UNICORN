@@ -224,6 +224,10 @@ function StandardsPageInner() {
       {creating && (
         <div className="card mb-5 space-y-4 p-6">
           <h2 className="font-semibold">新增標準問題</h2>
+          <p className="text-sm text-slate-600">
+            登記到標準問題＝組織認定的標準概念；KEY 命名規則與標準選項相同（例：{' '}
+            <code className="font-mono">demo_chineseName</code>）。前綴不代表已是標準問題。
+          </p>
 
           <div>
             <label className="label mb-1">答案模型</label>
@@ -250,7 +254,7 @@ function StandardsPageInner() {
                   className={`field font-mono ${freeKeyError || takenKeys.has(freeKey) ? 'field-error' : ''}`}
                   value={freeKey}
                   onChange={e => setFreeKey(e.target.value)}
-                  placeholder="emerContact"
+                  placeholder="demo_chineseName"
                 />
                 {freeKeyError && <p className="mt-1 text-sm text-red-600">{freeKeyError}</p>}
                 {!freeKeyError && takenKeys.has(freeKey) && (
@@ -323,7 +327,7 @@ function StandardsPageInner() {
                     className={`field font-mono ${scaleKeyError || takenKeys.has(scaleKey) ? 'field-error' : ''}`}
                     value={scaleKey}
                     onChange={e => setScaleKey(e.target.value)}
-                    placeholder="serEvaluation"
+                    placeholder="prog_satisfactionRating"
                   />
                   {scaleKeyError && <p className="mt-1 text-sm text-red-600">{scaleKeyError}</p>}
                 </div>
