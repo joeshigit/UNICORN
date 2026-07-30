@@ -242,7 +242,7 @@ orderBy('_submittedAt', 'desc')
 - `dropdown`／`choice`／`scale` 送出時都寫三形狀（陣列／Combined／Count）
 - 題庫（靜態／動態）不在本範圍
 
-查詢量表答案用題目 KEY，例如 `where('rating1', '==', '3')`，不是查 `likert3`。
+查詢量表答案用題目 KEY（存成陣列三形狀），例如 `where('rating1', 'array-contains', '3')`，或查 `rating1Combined`／`rating1Count`；不是查 `likert3` 這類自定義 KEY。
 
 ---
 

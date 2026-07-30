@@ -145,34 +145,45 @@ export function FieldInput({
 
       const single = Array.isArray(value) ? (value[0] ?? '') : ((value as string) || '')
       return (
-        <div
-          className={`space-y-1 rounded-xl border p-2 ${
-            error
-              ? 'border-red-300 bg-red-50'
-              : disabled
-                ? 'border-slate-200 bg-slate-50'
-                : 'border-slate-300 bg-white'
-          }`}
-        >
-          {active.length === 0 && <p className="hint px-1 py-2">這個選項池還沒有選項</p>}
-          {active.map(option => (
-            <label
-              key={option.value}
-              className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${
-                disabled ? 'cursor-not-allowed text-slate-500' : 'cursor-pointer hover:bg-slate-50'
-              }`}
+        <div className="space-y-1">
+          <div
+            className={`space-y-1 rounded-xl border p-2 ${
+              error
+                ? 'border-red-300 bg-red-50'
+                : disabled
+                  ? 'border-slate-200 bg-slate-50'
+                  : 'border-slate-300 bg-white'
+            }`}
+          >
+            {active.length === 0 && <p className="hint px-1 py-2">這個選項池還沒有選項</p>}
+            {active.map(option => (
+              <label
+                key={option.value}
+                className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${
+                  disabled ? 'cursor-not-allowed text-slate-500' : 'cursor-pointer hover:bg-slate-50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={`choice-${field.key}`}
+                  className="text-unicorn-600 focus:ring-unicorn-500"
+                  disabled={disabled}
+                  checked={single === option.value}
+                  onChange={() => onChange(option.value)}
+                />
+                <span className="text-sm">{option.label}</span>
+              </label>
+            ))}
+          </div>
+          {!field.required && single && !disabled && (
+            <button
+              type="button"
+              className="text-xs text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
+              onClick={() => onChange('')}
             >
-              <input
-                type="radio"
-                name={`choice-${field.key}`}
-                className="text-unicorn-600 focus:ring-unicorn-500"
-                disabled={disabled}
-                checked={single === option.value}
-                onChange={() => onChange(option.value)}
-              />
-              <span className="text-sm">{option.label}</span>
-            </label>
-          ))}
+              清除選擇
+            </button>
+          )}
         </div>
       )
     }
@@ -198,7 +209,10 @@ export function FieldInput({
                         ? 'border-slate-200 bg-slate-50 text-slate-400'
                         : 'border-slate-300 bg-white hover:border-unicorn-300'
                   } ${error ? 'border-red-300' : ''}`}
-                  onClick={() => onChange(option.value)}
+                  onClick={() => {
+                    if (selected && !field.required) onChange('')
+                    else onChange(option.value)
+                  }}
                 >
                   <span className="block font-medium">{option.value}</span>
                   {option.label !== option.value && (
@@ -210,6 +224,15 @@ export function FieldInput({
               )
             })}
           </div>
+          {!field.required && single && !disabled && (
+            <button
+              type="button"
+              className="text-xs text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
+              onClick={() => onChange('')}
+            >
+              清除選擇
+            </button>
+          )}
         </div>
       )
     }

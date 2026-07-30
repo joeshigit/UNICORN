@@ -752,7 +752,10 @@ function expandScaleMatrixFields(labels, scalePoints, usedKeys, startOrder) {
   if (trimmed.length === 0) return { error: '請至少輸入一列題目' }
   if (!SCALE_POINTS_OPTIONS.includes(scalePoints)) return { error: '請選擇有效的量表點數' }
   const keys = allocateRatingKeys(usedKeys, trimmed.length)
-  if (!keys) return { error: '空位不足' }
+  if (!keys) {
+    const free = RATING_KEYS.filter(k => !new Set(usedKeys).has(k)).length
+    return { error: `量表 KEY 只剩 ${free} 個空位，無法加入 ${trimmed.length} 題` }
+  }
   return trimmed.map((label, i) => ({
     key: keys[i],
     type: 'scale',
