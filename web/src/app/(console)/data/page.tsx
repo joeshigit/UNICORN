@@ -1,25 +1,43 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { CalendarRange, Download, Filter, RefreshCw, SlidersHorizontal } from 'lucide-react'
+import {
+  CalendarRange,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Filter,
+  RefreshCw,
+  SlidersHorizontal,
+} from 'lucide-react'
+import type { QueryDocumentSnapshot, DocumentData } from 'firebase/firestore'
 import { useAuth } from '@/components/auth'
 import { EmptyState, ErrorBanner, PageHeader, Spinner, StatusChip } from '@/components/ui'
 import { SubmissionDetail } from '@/components/SubmissionDetail'
 import {
+  applyRefineFilters,
+  browseSubmissions,
+  countHiddenVoid,
   exportAllSubmissions,
   listOptionSets,
   listTemplates,
+  maskVoid,
   monthRange,
   querySubmissions,
   recentMonths,
+  resolveBrowseDefaultsForScope,
   toDate,
+  userIsManager,
+  type ManagerBrowseScope,
+  type RefineCondition,
+  type RefineOp,
+  type SubmissionQuery,
 } from '@/lib/db'
-import type { SubmissionQuery } from '@/lib/db'
-import { ACTION_CODE, MODULE_CODE, NON_SUBMISSION_QUERY_CODES, combinedKey, countKey } from '@/lib/keys'
+import { NON_SUBMISSION_QUERY_CODES, combinedKey, countKey } from '@/lib/keys'
 import { downloadCsv, toCsv } from '@/lib/csv'
-import type { OptionSet, Submission, SubmissionStatus, Template } from '@/types'
+import type { OptionSet, Submission, Template } from '@/types'
 
 function displayValue(submission: Submission, key: string): string {
   const optionLabel = submission._optionLabels?.[key]
@@ -42,37 +60,74 @@ interface BlockedInfo {
   limit: number
 }
 
+type DataMode = 'browse' | 'advanced'
+
+function emptyRefineRow(): RefineCondition {
+  return { key: '', op: 'eq', value: '' }
+}
+
 function DataPool() {
   const params = useSearchParams()
   const { email, uid, isSuperuser } = useAuth()
 
   const [templates, setTemplates] = useState<Template[]>([])
   const [optionSets, setOptionSets] = useState<OptionSet[]>([])
-  const [rows, setRows] = useState<Submission[]>([])
+  const [isManager, setIsManager] = useState(false)
+
+  // 已載入的完整集合（含 VOID）
+  const [loadedRows, setLoadedRows] = useState<Submission[]>([])
   const [blocked, setBlocked] = useState<BlockedInfo | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
   const [selected, setSelected] = useState<Submission | null>(null)
+  const [hasMore, setHasMore] = useState(false)
+  const setCursorsRef = useRef<Array<QueryDocumentSnapshot<DocumentData> | null>>([])
 
-  // 第一個條件：提交月份範圍，必填，預設當月
+  const [mode, setMode] = useState<DataMode>('browse')
+  const [managerScope, setManagerScope] = useState<ManagerBrowseScope>('visible')
+  const [browseDays, setBrowseDays] = useState<14 | 30>(14)
+
+  // 畫面遮罩（永不打 DB）
+  const [showVoid, setShowVoid] = useState(false)
+
+  // 精修草稿／已套用
+  const [refineOpen, setRefineOpen] = useState(false)
+  const [refineDraft, setRefineDraft] = useState<RefineCondition[]>([emptyRefineRow()])
+  const [refineApplied, setRefineApplied] = useState<RefineCondition[]>([])
+
+  // 進階搜尋草稿／已套用
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const initialRange = useMemo(() => monthRange(0, 1), [])
   const [fromMonth, setFromMonth] = useState(initialRange.fromMonth)
   const [toMonth, setToMonth] = useState(initialRange.toMonth)
-
-  // 第二個條件：表格
   const [templateId, setTemplateId] = useState(params.get('form') || '')
-
-  // 以下都是前端精修
-  const [status, setStatus] = useState<SubmissionStatus | 'ALL'>('ACTIVE')
-  const [moduleFilter, setModuleFilter] = useState('')
-  const [actionFilter, setActionFilter] = useState('')
-  const [fieldKey, setFieldKey] = useState('')
-  const [fieldValue, setFieldValue] = useState('')
   const [includeSuperseded, setIncludeSuperseded] = useState(false)
   const [withDerived, setWithDerived] = useState(false)
+  const [appliedAdvanced, setAppliedAdvanced] = useState<SubmissionQuery | null>(null)
 
   const months = useMemo(() => recentMonths(36), [])
+  const actor = useMemo(() => ({ uid, email }), [uid, email])
+
+  const browseDefaults = useMemo(
+    () =>
+      resolveBrowseDefaultsForScope({
+        isSuperuser,
+        isManager,
+        managerScope: isManager ? managerScope : 'mine',
+      }),
+    [isSuperuser, isManager, managerScope]
+  )
+
+  // 非 mine 時可用 14/30；mine／Submitter 固定 30
+  const effectiveDays = useMemo(() => {
+    if (isSuperuser) return browseDays
+    if (isManager && managerScope === 'visible') return browseDays
+    return 30
+  }, [isSuperuser, isManager, managerScope, browseDays])
+
+  const effectivePageSize = browseDefaults.pageSize
 
   useEffect(() => {
     Promise.all([listTemplates(), listOptionSets()])
@@ -83,62 +138,125 @@ function DataPool() {
       .catch(err => setError(err instanceof Error ? err.message : '載入失敗'))
   }, [])
 
-  const queryInput = useMemo<SubmissionQuery>(
-    () => ({
-      fromMonth,
-      toMonth,
-      templateId: templateId || undefined,
-      status,
-      includeSuperseded,
-      module: moduleFilter || undefined,
-      action: actionFilter || undefined,
-      fieldKey: fieldKey || undefined,
-      fieldValue: fieldKey && fieldValue ? fieldValue : undefined,
-    }),
+  useEffect(() => {
+    if (!email || isSuperuser) {
+      setIsManager(false)
+      return
+    }
+    userIsManager(email)
+      .then(setIsManager)
+      .catch(() => setIsManager(false))
+  }, [email, isSuperuser])
+
+  // Manager／Superuser 進入可見範圍時預設 14 天
+  useEffect(() => {
+    if (isSuperuser || (isManager && managerScope === 'visible')) {
+      setBrowseDays(d => (d === 14 || d === 30 ? d : 14))
+    }
+  }, [isSuperuser, isManager, managerScope])
+
+  const runBrowse = useCallback(
+    async (append: boolean) => {
+      if (!uid || !email) return
+      if (append) setLoadingMore(true)
+      else {
+        setLoading(true)
+        setCursorsRef.current = []
+      }
+      setError('')
+      setBlocked(null)
+      try {
+        const result = await browseSubmissions(
+          {
+            days: effectiveDays,
+            pageSize: effectivePageSize,
+            managerScope: isSuperuser ? 'visible' : isManager ? managerScope : 'mine',
+            setCursors: append ? setCursorsRef.current : undefined,
+          },
+          actor,
+          isSuperuser
+        )
+        setCursorsRef.current = result.setCursors
+        setHasMore(result.hasMore)
+        setMode('browse')
+        setAppliedAdvanced(null)
+        if (append) {
+          setLoadedRows(prev => {
+            const map = new Map(prev.map(r => [r.id, r]))
+            for (const r of result.rows) map.set(r.id!, r)
+            return Array.from(map.values()).sort((a, b) => {
+              const at = toDate(a._submittedAt)?.getTime() ?? 0
+              const bt = toDate(b._submittedAt)?.getTime() ?? 0
+              return bt - at
+            })
+          })
+        } else {
+          setLoadedRows(result.rows)
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '載入失敗')
+      } finally {
+        setLoading(false)
+        setLoadingMore(false)
+      }
+    },
     [
-      fromMonth,
-      toMonth,
-      templateId,
-      status,
-      includeSuperseded,
-      moduleFilter,
-      actionFilter,
-      fieldKey,
-      fieldValue,
+      uid,
+      email,
+      effectiveDays,
+      effectivePageSize,
+      isSuperuser,
+      isManager,
+      managerScope,
+      actor,
     ]
   )
 
-  const actor = useMemo(() => ({ uid, email }), [uid, email])
+  // 進入頁／換 browse 伺服器條件 → 重查（精修與作廢不在依賴內）
+  useEffect(() => {
+    if (uid && email) runBrowse(false)
+  }, [uid, email, effectiveDays, effectivePageSize, managerScope, isManager, isSuperuser]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const runQuery = useCallback(async () => {
-    // 範圍顛倒時不要送查詢，畫面已經有提示了
+  const runAdvanced = async () => {
+    // '' = 尚未選；'*' = 全部表格（明示）
+    if (templateId === '') {
+      setError('請先選擇表格，或選「全部表格」')
+      return
+    }
     if (fromMonth > toMonth) {
-      setRows([])
-      setBlocked(null)
-      setLoading(false)
+      setError('起始月份不能晚於結束月份')
       return
     }
     setLoading(true)
     setError('')
+    setBlocked(null)
     try {
-      const result = await querySubmissions(queryInput, actor, isSuperuser)
+      const q: SubmissionQuery = {
+        fromMonth,
+        toMonth,
+        templateId: templateId === '*' ? undefined : templateId,
+        includeSuperseded,
+      }
+      const result = await querySubmissions(q, actor, isSuperuser)
       if (result.blocked) {
         setBlocked({ count: result.count, limit: result.limit })
-        setRows([])
+        setLoadedRows([])
+        setAppliedAdvanced(null)
+        setHasMore(false)
       } else {
         setBlocked(null)
-        setRows(result.rows)
+        setLoadedRows(result.rows)
+        setAppliedAdvanced(q)
+        setMode('advanced')
+        setHasMore(false)
+        setCursorsRef.current = []
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '查詢失敗')
     } finally {
       setLoading(false)
     }
-  }, [queryInput, actor, isSuperuser, fromMonth, toMonth])
-
-  useEffect(() => {
-    if (uid && email) runQuery()
-  }, [runQuery, uid, email])
+  }
 
   const applyQuickRange = (offset: number, span: number) => {
     const next = monthRange(offset, span)
@@ -146,19 +264,32 @@ function DataPool() {
     setToMonth(next.toMonth)
   }
 
-  const activeTemplate = templates.find(t => t.id === templateId) || null
+  const refineDirty = useMemo(
+    () => JSON.stringify(refineDraft) !== JSON.stringify(refineApplied.length ? refineApplied : [emptyRefineRow()]),
+    [refineDraft, refineApplied]
+  )
 
-  const moduleChoices = useMemo(() => {
-    const master = optionSets.find(os => os.code === MODULE_CODE && os.isMaster)
-    return master?.items || []
-  }, [optionSets])
+  const applyRefine = () => {
+    setRefineApplied(refineDraft.map(c => ({ ...c })))
+  }
 
-  const actionChoices = useMemo(() => {
-    const master = optionSets.find(os => os.code === ACTION_CODE && os.isMaster)
-    return master?.items || []
-  }, [optionSets])
+  const visibleRows = useMemo(() => {
+    const refined = applyRefineFilters(loadedRows, refineApplied)
+    return maskVoid(refined, showVoid)
+  }, [loadedRows, refineApplied, showVoid])
 
-  // 跨表 KEY：排除 module / action / managerGroup（它們是模板維度或 ACL）
+  const hiddenVoidCount = useMemo(() => {
+    const refined = applyRefineFilters(loadedRows, refineApplied)
+    return showVoid ? 0 : countHiddenVoid(refined)
+  }, [loadedRows, refineApplied, showVoid])
+
+  const activeTemplate =
+    mode === 'advanced' && appliedAdvanced?.templateId
+      ? templates.find(t => t.id === appliedAdvanced.templateId) || null
+      : templateId && templateId !== '*'
+        ? templates.find(t => t.id === templateId) || null
+        : null
+
   const keyChoices = useMemo(() => {
     const byCode = new Map<string, OptionSet[]>()
     for (const set of optionSets) {
@@ -176,8 +307,6 @@ function DataPool() {
       .sort((a, b) => a.code.localeCompare(b.code))
   }, [optionSets])
 
-  const selectedKeyChoice = keyChoices.find(k => k.code === fieldKey)
-
   const columns = useMemo(() => {
     if (activeTemplate) {
       return [...activeTemplate.fields]
@@ -185,7 +314,7 @@ function DataPool() {
         .map(f => ({ key: f.key, label: f.label }))
     }
     const seen = new Map<string, string>()
-    for (const row of rows) {
+    for (const row of loadedRows) {
       for (const key of row._fieldKeys || []) {
         if (!seen.has(key)) seen.set(key, row._fieldLabels?.[key] || key)
       }
@@ -193,11 +322,11 @@ function DataPool() {
     return Array.from(seen.entries())
       .slice(0, 6)
       .map(([key, label]) => ({ key, label }))
-  }, [activeTemplate, rows])
+  }, [activeTemplate, loadedRows])
 
   const dropdownColumns = useMemo(
-    () => columns.filter(c => rows.some(row => row[countKey(c.key)] !== undefined)),
-    [columns, rows]
+    () => columns.filter(c => loadedRows.some(row => row[countKey(c.key)] !== undefined)),
+    [columns, loadedRows]
   )
 
   const buildCsv = (dataRows: Submission[]) => {
@@ -240,16 +369,24 @@ function DataPool() {
     })
 
     const name = activeTemplate ? activeTemplate.name : 'unicorn'
-    const stamp = fromMonth === toMonth ? fromMonth : `${fromMonth}_${toMonth}`
+    const stamp =
+      appliedAdvanced && appliedAdvanced.fromMonth === appliedAdvanced.toMonth
+        ? appliedAdvanced.fromMonth
+        : appliedAdvanced
+          ? `${appliedAdvanced.fromMonth}_${appliedAdvanced.toMonth}`
+          : 'export'
     downloadCsv(`${name}_${stamp}.csv`, toCsv(headers, data))
   }
 
   const handleExport = async () => {
+    if (!appliedAdvanced) {
+      setError('請先用進階搜尋選定月份範圍並查詢後再匯出')
+      return
+    }
     setExporting(true)
     setError('')
     try {
-      // 匯出不套用顯示上限，走 cursor 分頁把整個範圍取完
-      const all = await exportAllSubmissions(queryInput, actor, isSuperuser)
+      const all = await exportAllSubmissions(appliedAdvanced, actor, isSuperuser)
       if (all.length === 0) {
         setError('這個條件沒有可匯出的資料')
         return
@@ -262,20 +399,39 @@ function DataPool() {
     }
   }
 
-  const rangeLabel = fromMonth === toMonth ? fromMonth : `${fromMonth} ～ ${toMonth}`
+  const rangeLabel =
+    appliedAdvanced && appliedAdvanced.fromMonth === appliedAdvanced.toMonth
+      ? appliedAdvanced.fromMonth
+      : appliedAdvanced
+        ? `${appliedAdvanced.fromMonth} ～ ${appliedAdvanced.toMonth}`
+        : ''
+
+  const showWindowToggle = isSuperuser || (isManager && managerScope === 'visible')
+
+  const updateDraft = (index: number, patch: Partial<RefineCondition>) => {
+    setRefineDraft(prev => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  }
 
   return (
     <>
       <PageHeader
         title="資料池"
-        description="先選提交月份範圍，再選表格。其餘條件是在取回的範圍內精修。"
+        description="預設瀏覽近期資料；需要完整月份範圍時再開進階搜尋。作廢預設隱藏，精修只作用在已載入的資料。"
         actions={
           <>
-            <button className="btn-secondary" onClick={runQuery}>
+            <button
+              className="btn-secondary"
+              onClick={() => (mode === 'browse' ? runBrowse(false) : runAdvanced())}
+            >
               <RefreshCw className="h-4 w-4" />
-              重新查詢
+              重新整理
             </button>
-            <button className="btn-primary" onClick={handleExport} disabled={exporting}>
+            <button
+              className="btn-primary"
+              onClick={handleExport}
+              disabled={exporting || !appliedAdvanced}
+              title={!appliedAdvanced ? '請先用進階搜尋查詢後再匯出' : undefined}
+            >
               <Download className="h-4 w-4" />
               {exporting ? '匯出中…' : '完整匯出 CSV'}
             </button>
@@ -286,184 +442,257 @@ function DataPool() {
       {error && <ErrorBanner message={error} />}
 
       <div className="card mb-5 divide-y divide-slate-100">
+        {/* Browse 控制 */}
         <div className="p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-600">
             <CalendarRange className="h-4 w-4" />
-            提交月份範圍（必填）
+            瀏覽近期
+            <span className="hint font-normal">
+              （近 {effectiveDays} 天，每批最多 {effectivePageSize} 筆）
+            </span>
           </div>
 
-          <div className="mb-3 flex flex-wrap gap-2">
-            <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(0, 1)}>
-              本月
-            </button>
-            <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(1, 1)}>
-              上月
-            </button>
-            <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(0, 3)}>
-              近三個月
-            </button>
-            <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(0, 12)}>
-              近十二個月
-            </button>
+          <div className="flex flex-wrap gap-2">
+            {isManager && !isSuperuser && (
+              <>
+                <button
+                  className={`btn-secondary btn-sm ${managerScope === 'visible' ? 'ring-2 ring-unicorn-500' : ''}`}
+                  onClick={() => {
+                    setManagerScope('visible')
+                    setBrowseDays(14)
+                  }}
+                >
+                  可見範圍
+                </button>
+                <button
+                  className={`btn-secondary btn-sm ${managerScope === 'mine' ? 'ring-2 ring-unicorn-500' : ''}`}
+                  onClick={() => setManagerScope('mine')}
+                >
+                  只看我填的
+                </button>
+              </>
+            )}
+            {showWindowToggle && (
+              <>
+                <button
+                  className={`btn-secondary btn-sm ${browseDays === 14 ? 'ring-2 ring-unicorn-500' : ''}`}
+                  onClick={() => setBrowseDays(14)}
+                >
+                  近 14 天
+                </button>
+                <button
+                  className={`btn-secondary btn-sm ${browseDays === 30 ? 'ring-2 ring-unicorn-500' : ''}`}
+                  onClick={() => setBrowseDays(30)}
+                >
+                  近 30 天
+                </button>
+              </>
+            )}
+            <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                checked={showVoid}
+                onChange={e => setShowVoid(e.target.checked)}
+              />
+              顯示作廢
+            </label>
           </div>
+        </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div>
-              <label className="label mb-1">起</label>
-              <select className="field" value={fromMonth} onChange={e => setFromMonth(e.target.value)}>
-                {months.map(m => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="label mb-1">迄</label>
-              <select className="field" value={toMonth} onChange={e => setToMonth(e.target.value)}>
-                {months.map(m => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="label mb-1">表格</label>
-              <select className="field" value={templateId} onChange={e => setTemplateId(e.target.value)}>
-                <option value="">全部表格</option>
-                {templates.map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+        {/* 精修（收合） */}
+        <div className="p-4">
+          <button
+            type="button"
+            className="mb-0 flex w-full items-center gap-2 text-sm font-medium text-slate-600"
+            onClick={() => setRefineOpen(o => !o)}
+          >
+            {refineOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            <SlidersHorizontal className="h-4 w-4" />
+            精修已載入資料
+            <span className="hint font-normal">（不重新查詢）</span>
+            {refineDirty && <span className="hint text-amber-600">有未套用的變更</span>}
+          </button>
 
-          {fromMonth > toMonth && (
-            <p className="mt-2 text-sm text-red-600">起始月份不能晚於結束月份。</p>
+          {refineOpen && (
+            <div className="mt-3 space-y-3">
+              {refineDraft.map((row, index) => {
+                const keyChoice = keyChoices.find(k => k.code === row.key)
+                return (
+                  <div key={index} className="grid gap-3 sm:grid-cols-3">
+                    <div>
+                      <label className="label mb-1">跨表 KEY</label>
+                      <select
+                        className="field"
+                        value={row.key}
+                        onChange={e => updateDraft(index, { key: e.target.value, value: '' })}
+                      >
+                        <option value="">不使用</option>
+                        {keyChoices.map(k => (
+                          <option key={k.code} value={k.code}>
+                            {k.code}（{k.name}）
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="label mb-1">條件</label>
+                      <select
+                        className="field"
+                        value={row.op}
+                        onChange={e => updateDraft(index, { op: e.target.value as RefineOp })}
+                      >
+                        <option value="eq">等於</option>
+                        <option value="neq">不等於</option>
+                        <option value="hasValue">有值</option>
+                        <option value="blank">空白</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="label mb-1">值</label>
+                      <select
+                        className="field"
+                        value={row.value || ''}
+                        disabled={!keyChoice || row.op === 'hasValue' || row.op === 'blank'}
+                        onChange={e => updateDraft(index, { value: e.target.value })}
+                      >
+                        <option value="">選取值</option>
+                        {keyChoice?.values.map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )
+              })}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => setRefineDraft(prev => [...prev, emptyRefineRow()])}
+                >
+                  加一列條件
+                </button>
+                <button type="button" className="btn-primary btn-sm" onClick={applyRefine}>
+                  套用精修
+                </button>
+              </div>
+            </div>
           )}
         </div>
 
+        {/* 進階搜尋（收合） */}
         <div className="p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-600">
-            <SlidersHorizontal className="h-4 w-4" />
-            在這個範圍內精修
-            <span className="hint font-normal">（不影響取回的資料量）</span>
-          </div>
+          <button
+            type="button"
+            className="mb-0 flex w-full items-center gap-2 text-sm font-medium text-slate-600"
+            onClick={() => setAdvancedOpen(o => !o)}
+          >
+            {advancedOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            <Filter className="h-4 w-4" />
+            進階搜尋
+            <span className="hint font-normal">（月份範圍完整查詢，需按查詢）</span>
+          </button>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <label className="label mb-1">分類 module</label>
-              <select
-                className="field"
-                value={moduleFilter}
-                onChange={e => setModuleFilter(e.target.value)}
-              >
-                <option value="">全部</option>
-                {moduleChoices.map(item => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+          {advancedOpen && (
+            <div className="mt-3">
+              <div className="mb-3 flex flex-wrap gap-2">
+                <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(0, 1)}>
+                  本月
+                </button>
+                <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(1, 1)}>
+                  上月
+                </button>
+                <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(0, 3)}>
+                  近三個月
+                </button>
+                <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(0, 12)}>
+                  近十二個月
+                </button>
+              </div>
 
-            <div>
-              <label className="label mb-1">動作 action</label>
-              <select
-                className="field"
-                value={actionFilter}
-                onChange={e => setActionFilter(e.target.value)}
-              >
-                <option value="">全部</option>
-                {actionChoices.map(item => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="label mb-1">起</label>
+                  <select
+                    className="field"
+                    value={fromMonth}
+                    onChange={e => setFromMonth(e.target.value)}
+                  >
+                    {months.map(m => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label mb-1">迄</label>
+                  <select className="field" value={toMonth} onChange={e => setToMonth(e.target.value)}>
+                    {months.map(m => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label mb-1">表格</label>
+                  <select
+                    className="field"
+                    value={templateId}
+                    onChange={e => setTemplateId(e.target.value)}
+                  >
+                    <option value="">請選擇…</option>
+                    <option value="*">全部表格</option>
+                    {templates.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
-            <div>
-              <label className="label mb-1">狀態</label>
-              <select
-                className="field"
-                value={status}
-                onChange={e => setStatus(e.target.value as SubmissionStatus | 'ALL')}
-              >
-                <option value="ACTIVE">有效</option>
-                <option value="VOID">已作廢</option>
-                <option value="ALL">全部</option>
-              </select>
-            </div>
+              {fromMonth > toMonth && (
+                <p className="mt-2 text-sm text-red-600">起始月份不能晚於結束月份。</p>
+              )}
 
-            <div>
-              <label className="label mb-1">跨表 KEY</label>
-              <select
-                className="field"
-                value={fieldKey}
-                onChange={e => {
-                  setFieldKey(e.target.value)
-                  setFieldValue('')
-                }}
-              >
-                <option value="">不使用</option>
-                {keyChoices.map(k => (
-                  <option key={k.code} value={k.code}>
-                    {k.code}（{k.name}）
-                  </option>
-                ))}
-              </select>
+              <div className="mt-3 flex flex-wrap items-center gap-4">
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                    checked={includeSuperseded}
+                    onChange={e => setIncludeSuperseded(e.target.checked)}
+                  />
+                  連被更正的舊版本一起看
+                </label>
+                <label
+                  className="flex cursor-pointer items-center gap-2 text-sm text-slate-600"
+                  title="下拉欄位除了顯示值，另外帶出組合字串與選了幾個，方便做樞紐分析"
+                >
+                  <input
+                    type="checkbox"
+                    className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                    checked={withDerived}
+                    onChange={e => setWithDerived(e.target.checked)}
+                  />
+                  匯出時帶出組合值與數量
+                </label>
+                <button type="button" className="btn-primary btn-sm" onClick={runAdvanced}>
+                  查詢
+                </button>
+              </div>
             </div>
-
-            <div>
-              <label className="label mb-1">KEY 的值</label>
-              <select
-                className="field"
-                value={fieldValue}
-                disabled={!selectedKeyChoice}
-                onChange={e => setFieldValue(e.target.value)}
-              >
-                <option value="">全部</option>
-                {selectedKeyChoice?.values.map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex flex-col justify-end gap-2 pb-1.5">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
-                <input
-                  type="checkbox"
-                  className="rounded text-unicorn-600 focus:ring-unicorn-500"
-                  checked={includeSuperseded}
-                  onChange={e => setIncludeSuperseded(e.target.checked)}
-                />
-                連被更正的舊版本一起看
-              </label>
-              <label
-                className="flex cursor-pointer items-center gap-2 text-sm text-slate-600"
-                title="下拉欄位除了顯示值，另外帶出組合字串與選了幾個，方便做樞紐分析"
-              >
-                <input
-                  type="checkbox"
-                  className="rounded text-unicorn-600 focus:ring-unicorn-500"
-                  checked={withDerived}
-                  onChange={e => setWithDerived(e.target.checked)}
-                />
-                匯出時帶出組合值與數量
-              </label>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
       {loading ? (
-        <Spinner label="查詢中" />
+        <Spinner label={mode === 'advanced' ? '查詢中' : '載入中'} />
       ) : blocked ? (
         <div className="card p-6">
           <div className="flex items-start gap-3">
@@ -471,11 +700,11 @@ function DataPool() {
             <div>
               <h2 className="font-semibold">範圍太大，尚未取回資料</h2>
               <p className="mt-1 text-sm text-slate-600">
-                {rangeLabel} 這個範圍符合 <strong>{blocked.count}</strong> 筆，超過單次顯示上限{' '}
-                {blocked.limit} 筆。
+                {fromMonth === toMonth ? fromMonth : `${fromMonth} ～ ${toMonth}`} 這個範圍符合{' '}
+                <strong>{blocked.count}</strong> 筆，超過單次顯示上限 {blocked.limit} 筆。
               </p>
               <p className="mt-2 text-sm text-slate-500">
-                請縮小月份範圍或指定表格後再查；若要取得全部資料，請按上方「完整匯出 CSV」。
+                請縮小月份範圍或指定表格後再查；若要取得全部資料，請先成功查詢後再按「完整匯出 CSV」。
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
                 <button className="btn-secondary btn-sm" onClick={() => applyQuickRange(0, 1)}>
@@ -488,14 +717,22 @@ function DataPool() {
             </div>
           </div>
         </div>
-      ) : rows.length === 0 ? (
+      ) : visibleRows.length === 0 ? (
         <EmptyState
-          title="這個範圍沒有符合條件的資料"
-          description="換個月份範圍或精修條件，或先去填一筆看看。"
+          title={loadedRows.length === 0 ? '沒有資料' : '沒有符合精修條件的資料'}
+          description={
+            loadedRows.length === 0
+              ? '換時間窗，或用進階搜尋查完整月份，或先去填一筆。'
+              : showVoid
+                ? '調整精修條件後再套用。'
+                : '目前隱藏了作廢紀錄；可勾選「顯示作廢」或調整精修。'
+          }
           action={
-            <Link href="/fill" className="btn-primary">
-              去填報
-            </Link>
+            loadedRows.length === 0 ? (
+              <Link href="/fill" className="btn-primary">
+                去填報
+              </Link>
+            ) : undefined
           }
         />
       ) : (
@@ -515,7 +752,7 @@ function DataPool() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {rows.map(row => (
+                {visibleRows.map(row => (
                   <tr
                     key={row.id}
                     className="cursor-pointer hover:bg-slate-50"
@@ -543,8 +780,24 @@ function DataPool() {
               </tbody>
             </table>
           </div>
-          <div className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
-            {rangeLabel} 共 {rows.length} 筆（完整）
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
+            <span>
+              {mode === 'advanced' && appliedAdvanced
+                ? `${rangeLabel} 共 ${loadedRows.length} 筆（此範圍完整）`
+                : `顯示 ${visibleRows.length}／已載入 ${loadedRows.length}（近 ${effectiveDays} 天${
+                    hiddenVoidCount ? `，作廢已隱藏 ${hiddenVoidCount}` : ''
+                  }）`}
+            </span>
+            {mode === 'browse' && hasMore && (
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                disabled={loadingMore}
+                onClick={() => runBrowse(true)}
+              >
+                {loadingMore ? '載入中…' : '載入更多'}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -557,7 +810,8 @@ function DataPool() {
           onClose={() => setSelected(null)}
           onChanged={() => {
             setSelected(null)
-            runQuery()
+            if (mode === 'advanced' && appliedAdvanced) runAdvanced()
+            else runBrowse(false)
           }}
         />
       )}

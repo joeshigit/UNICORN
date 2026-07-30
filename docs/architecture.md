@@ -143,67 +143,88 @@ where('note', '==', null)
 
 ---
 
-## 7. 查詢完整性：先計數，再決定要不要查
+## 7. 資料池：Browse 與進階搜尋
 
-資料池的查詢順序是強制的，跟銀行 App 一樣：
+資料池有兩種讀取模式。**只有進階搜尋**保證「此範圍完整」；Browse 只保證「已載入的這一帶」。
 
-1. **提交月份範圍（必填）** — 預設當月
-2. **哪一張表格（選填）**
-3. 其餘條件都是**前端精修**
+### 7.1 Browse（預設）
 
-只有前兩項送進 Firestore：
+進入資料池先 Browse，依角色用時間窗 × 每頁上限：
+
+| 角色／範圍 | 預設時間窗 | 每頁上限 |
+|------------|------------|----------|
+| Submitter | 近 30 天 | 50 |
+| Manager 可見範圍（自己 ∪ 所管表格） | 近 14 天（可切 30 天） | 100 |
+| Manager 只看我填的 | 近 30 天 | 50 |
+| Superuser | 近 14 天（可切 30 天） | 100 |
+
+```js
+where('_isLatest', '==', true)
+where('_submittedAt', '>=', cutoff)   // now - days
+orderBy('_submittedAt', 'desc')
+limit(pageSize)
+// 角色隔離：_submitterUid 與／或 _templateId in …
+```
+
+- 無 count 閘門；可 cursor「載入更多」
+- 多腿合併後取前 pageSize 為**近似**最新；不宣稱跨腿精確全域排序
+- 帳單約 `min(窗內可見筆數, pageSize)`／批（Manager 多腿合併前可能略高）
+
+### 7.2 進階搜尋（月份完整）
+
+需要完整月份範圍時才用。順序強制：
+
+1. **提交月份範圍（必填）**
+2. **哪一張表格**（須明示選擇；「全部表格」是選項之一）
+3. 按「查詢」才打 Firestore（條件變更不自動重查）
 
 ```js
 where('_isLatest', '==', true)              // 除非要看被更正的舊版本
-where('_submittedMonth', '>=', fromMonth)   // YYYY-MM 字典序，避開時區
+where('_submittedMonth', '>=', fromMonth)
 where('_submittedMonth', '<=', toMonth)
 // 選填：where('_templateId', '==', templateId)
-orderBy('_submittedMonth', 'asc')           // 不等式欄位必須是第一個 orderBy
+orderBy('_submittedMonth', 'asc')
 orderBy('_submittedAt', 'desc')
 ```
 
-送出查詢前先用 `getCountFromServer` 計數：
+送出前 `getCountFromServer`：
 
-- 超過 `QUERY_DISPLAY_LIMIT`（500）→ **完全不撈資料**，回 `{ blocked: true, count, limit }`，請使用者縮小月份範圍
-- 在上限內 → 把該範圍全部取回，前端精修作用在**完整集合**上
+- 超過 `QUERY_DISPLAY_LIMIT`（500）→ **完全不撈資料**，回 `{ blocked: true, count, limit }`
+- 在上限內 → 取回該範圍全部（**含 VOID**），才可說「此範圍完整」
 
-所以完整性是保證，不是警告。一次被擋下的搜尋只花約 1–2 次讀取，而不是 501 次。
+**為什麼月份範圍必須必填**：前端過濾不會降低 Firestore 筆數；範圍必填後縮小一定有效。
 
-**為什麼月份範圍必須必填**：前端過濾永遠不會降低 Firestore 層的筆數。若讓使用者只給一個 `school == X` 去計數，他再怎麼加條件筆數都不變，會卡在永遠被擋。範圍必填之後，計數永遠落在時間軸上，縮小一定有效。
+完整匯出走 `exportAllSubmissions`（須先進階搜尋成功），cursor 分頁，上限 `EXPORT_HARD_CAP`（20,000）。
 
-**清單查詢的規則陷阱**：`list` 與聚合查詢的規則是對「查詢條件推導出的 resource」求值，沒有被條件約束的欄位是 `undefined`。`isOwnerOfRecord()` 檢查 `_submitterUid`，所以擁有者那組查詢**必須用 `_submitterUid` 過濾**，用 `_submitterEmail` 會讓規則判不出身分而整個查詢被拒。
+### 7.3 畫面層（不重查）
 
-- `in` 以 `FIRESTORE_IN_LIMIT`（30）分批，**不截斷模板清單**
-- 非 Superuser 的計數是多組查詢相加，屬於**上界**（同一筆可能既是自己填的、又屬於自己管的表格）。上界安全，代價是偶爾多擋一次
-- 完整匯出走 `exportAllSubmissions`，cursor 分頁、不套用顯示上限，上限是 `EXPORT_HARD_CAP`（20,000）
-- module／action 映射 `_templateModule`／`_templateAction`，不當作一般 KEY 篩選
+取回的集合一律含 VOID：
 
-### 索引為什麼剛好是 9 個
+- **顯示作廢**：預設關閉（遮罩）；切換**不**打 Firestore
+- **精修 KEY**（eq／neq／hasValue／blank，可多條件）：按「套用」後只濾已載入資料
+- module／action 不作使用者篩選
 
-查詢只有一種形狀：等值條件 ＋ `_submittedMonth` 範圍 ＋ `orderBy(_submittedMonth, _submittedAt)`。
+### 7.4 清單查詢規則與隔離
 
-等值條件有三個可選欄位（`_submitterUid` / `_isLatest` / `_templateId`），共 8 種組合。**每一種組合都需要自己的索引**——索引欄位有順序，範圍欄位必須排在所有等值欄位之後，所以較長的索引無法服務較短的查詢。
+`list`／聚合規則對「查詢條件推導出的 resource」求值。`isOwnerOfRecord()` 檢查 `_submitterUid`，擁有者那組查詢**必須用 `_submitterUid`**。
 
-| 等值條件 | 什麼時候用到 |
-|---------|-------------|
-| 無 | Superuser ＋ 看舊版本 ＋ 不指定表格 |
-| `_isLatest` | Superuser 的預設查詢 |
-| `_templateId` | Superuser ＋ 看舊版本 ＋ 指定表格 |
-| `_isLatest` `_templateId` | Superuser 指定表格；Manager 的 `in` 查詢 |
-| `_submitterUid` | 一般使用者 ＋ 看舊版本 |
-| `_submitterUid` `_isLatest` | 一般使用者的預設查詢 |
-| `_submitterUid` `_templateId` | 一般使用者 ＋ 看舊版本 ＋ 指定表格 |
-| `_submitterUid` `_isLatest` `_templateId` | 一般使用者指定表格 |
+- `in` 以 `FIRESTORE_IN_LIMIT`（30）分批
+- 非 Superuser 進階搜尋計數是多組相加的**上界**（可重複計）
 
-加上 `uploadSessions` 的孤兒清理索引，總共 9 個。
+### 7.5 索引
 
-`module` / `action` / `status` / 跨表 KEY 都是前端精修，**不需要索引**。跨表 KEY 也不需要複合索引，所以新增選項池不必改索引檔、不必重新部署。
+兩種查詢形狀：
 
-每次寫入都會更新所有相符的索引，所以多餘的索引是實際的寫入成本，不要「留著以防萬一」。
+1. **進階搜尋**：等值 ＋ `_submittedMonth` 範圍 ＋ `orderBy(_submittedMonth, _submittedAt)` — 8 種等值組合（`_submitterUid`／`_isLatest`／`_templateId`）
+2. **Browse**：等值 ＋ `_submittedAt` 下界 ＋ `orderBy(_submittedAt desc)` — `_isLatest`／`_submitterUid+_isLatest`／`_templateId+_isLatest`，以及看舊版時去掉 `_isLatest` 的對應組合
+
+加上 `uploadSessions` 孤兒清理索引。
+
+跨表 KEY 精修不需要索引。多餘索引有寫入成本，不要「留著以防萬一」。
 
 ### 跨表格搜尋
 
-不指定表格時本來就是跨表格查詢——`submissions` 是統一的池子。以某個 Universal KEY 找特定值仍然可用，但它是**月份範圍內的前端精修**。以 KEY 為主軸、不先給時間範圍的專用搜尋模式是另一個需求，留待實際使用習慣明朗後再設計。
+不指定表格時本來就是跨表格——`submissions` 是統一的池子。以 Universal KEY 找值是**已載入集合上的前端精修**（Browse）或**月份範圍完整集合上的精修**（進階搜尋成功後）。
 
 ---
 

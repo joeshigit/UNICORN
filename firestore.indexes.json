@@ -173,6 +173,84 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "_isLatest",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "_submittedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "_submitterUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "_isLatest",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "_submittedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "_templateId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "_isLatest",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "_submittedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "_submitterUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "_submittedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "submissions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "_templateId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "_submittedAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

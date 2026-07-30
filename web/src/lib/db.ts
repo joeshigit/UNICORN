@@ -52,6 +52,28 @@ import type {
   Template,
   UserRole,
 } from '@/types'
+import {
+  browseCutoffDate,
+  mergeBrowsePages,
+  type ManagerBrowseScope,
+} from './submissionView'
+
+export type { ManagerBrowseScope }
+export {
+  applyRefineFilters,
+  browseCutoffDate,
+  BROWSE_MANAGER_MINE,
+  BROWSE_MANAGER_VISIBLE,
+  BROWSE_SUBMITTER,
+  BROWSE_SUPERUSER,
+  countHiddenVoid,
+  maskVoid,
+  mergeBrowsePages,
+  resolveBrowseDefaultsForScope,
+  type BrowseDefaults,
+  type RefineCondition,
+  type RefineOp,
+} from './submissionView'
 
 /** Firestore `in` / `array-contains-any` 目前 disjunction 上限 */
 export const FIRESTORE_IN_LIMIT = 30
@@ -672,22 +694,33 @@ export interface SubmissionQuery {
   toMonth: string
   /** 送進 Firestore 的第二個條件 */
   templateId?: string
-
-  // 以下都是前端精修：作用在已通過閘門、完整取回的集合上
-  status?: SubmissionStatus | 'ALL'
+  /** 是否連被更正的舊版本一起取（伺服器條件） */
   includeSuperseded?: boolean
-  /** 對應 _templateModule */
-  module?: string
-  /** 對應 _templateAction */
-  action?: string
-  fieldKey?: string
-  fieldValue?: string
 }
 
 export type SubmissionQueryResult =
   | { blocked: true; count: number; limit: number }
-  /** count 等於實際顯示的筆數，而且是完整的（不是「目前撈到幾筆」） */
+  /** rows 含 VOID；畫面遮罩／精修在 UI 層。count = 取回筆數（此範圍完整）。 */
   | { blocked: false; rows: Submission[]; count: number }
+
+export interface BrowseQuery {
+  days: number
+  pageSize: number
+  includeSuperseded?: boolean
+  /**
+   * Manager：visible = 自己 ∪ 所管表格；mine = 只看自己。
+   * Submitter／非 Manager 一律等同 mine。
+   */
+  managerScope?: ManagerBrowseScope
+  /** 上一頁各隔離腿的 cursor；與 isolation sets 對齊 */
+  setCursors?: Array<QueryDocumentSnapshot<DocumentData> | null>
+}
+
+export interface BrowseResult {
+  rows: Submission[]
+  hasMore: boolean
+  setCursors: Array<QueryDocumentSnapshot<DocumentData> | null>
+}
 
 function mapDocs(docs: QueryDocumentSnapshot<DocumentData>[]): Submission[] {
   return docs.map(d => ({ id: d.id, ...d.data() } as Submission))
@@ -839,30 +872,99 @@ async function fetchAllIsolated(
   return Array.from(merged.values())
 }
 
-function matchesFieldValue(raw: unknown, wanted: string): boolean {
-  if (Array.isArray(raw)) return raw.some(v => String(v) === wanted)
-  if (raw === undefined || raw === null) return false
-  return String(raw) === wanted
-}
-
-/** 前端精修。作用在完整集合上，所以結果仍然完整。 */
-function applyLocalFilters(rows: Submission[], q: SubmissionQuery): Submission[] {
-  let out = rows
-  if (q.module) out = out.filter(r => r._templateModule === q.module)
-  if (q.action) out = out.filter(r => r._templateAction === q.action)
-
-  const status = q.status ?? 'ACTIVE'
-  if (status !== 'ALL') out = out.filter(r => r._status === status)
-
-  if (q.fieldKey && q.fieldValue) {
-    out = out.filter(r => matchesFieldValue(r[q.fieldKey!], q.fieldValue!))
-  }
-  return out
-}
-
 function assertMonthRange(q: SubmissionQuery, action: string): void {
   if (!q.fromMonth || !q.toMonth) throw new Error(`${action}必須指定提交月份範圍`)
   if (q.fromMonth > q.toMonth) throw new Error('月份範圍的起始不能晚於結束')
+}
+
+/**
+ * Browse 隔離：mine 只跑擁有者那組；visible／Superuser 沿用 isolationPlan。
+ * 不改 isolationPlan 語意——mine 以空 managed 清單表達「不要管表格那幾腿」。
+ */
+async function resolveBrowseIsolation(
+  actor: Actor,
+  isSuperuser: boolean,
+  managerScope: ManagerBrowseScope
+): Promise<QueryConstraint[][]> {
+  if (isSuperuser) return [[]]
+  if (managerScope === 'mine') {
+    return isolationPlan({ fromMonth: '', toMonth: '' }, actor, false, [])
+  }
+  const role = await getUserRole(actor.email)
+  const managedTemplateIds = await listManagedTemplateIds(role?.groups || [])
+  return isolationPlan({ fromMonth: '', toMonth: '' }, actor, false, managedTemplateIds)
+}
+
+function browseWhereConstraints(includeSuperseded: boolean, cutoff: Date): QueryConstraint[] {
+  const constraints: QueryConstraint[] = []
+  if (!includeSuperseded) constraints.push(where('_isLatest', '==', true))
+  constraints.push(where('_submittedAt', '>=', Timestamp.fromDate(cutoff)))
+  return constraints
+}
+
+/**
+ * 資料池 Browse：時間窗 + 角色 pageSize，無 count 閘門。
+ * 多腿合併後取前 pageSize 為近似「可見範圍最新」；完整月份請走 querySubmissions。
+ */
+export async function browseSubmissions(
+  q: BrowseQuery,
+  actor: Actor,
+  isSuperuser: boolean
+): Promise<BrowseResult> {
+  if (!q.days || q.days < 1) throw new Error('Browse 必須指定天數')
+  if (!q.pageSize || q.pageSize < 1) throw new Error('Browse 必須指定每頁筆數')
+
+  const managerScope: ManagerBrowseScope = q.managerScope ?? 'visible'
+  const sets = await resolveBrowseIsolation(actor, isSuperuser, managerScope)
+  const cutoff = browseCutoffDate(q.days)
+  const whereConstraints = browseWhereConstraints(!!q.includeSuperseded, cutoff)
+  const prevCursors = q.setCursors || []
+
+  const pages: QueryDocumentSnapshot<DocumentData>[][] = []
+  const nextCursors: Array<QueryDocumentSnapshot<DocumentData> | null> = []
+  let anyFullPage = false
+
+  for (let i = 0; i < sets.length; i++) {
+    const extra = sets[i]
+    const constraints: QueryConstraint[] = [
+      ...extra,
+      ...whereConstraints,
+      orderBy('_submittedAt', 'desc'),
+      fsLimit(q.pageSize),
+    ]
+    const cursor = prevCursors[i]
+    if (cursor) constraints.push(startAfter(cursor))
+
+    const snap = await getDocsFromServer(query(collection(db, 'submissions'), ...constraints))
+    pages.push(snap.docs)
+    if (snap.docs.length === q.pageSize) {
+      anyFullPage = true
+      nextCursors.push(snap.docs[snap.docs.length - 1])
+    } else {
+      nextCursors.push(null)
+    }
+  }
+
+  const merged = mergeBrowsePages(pages, q.pageSize, doc => {
+    const at = toDate(doc.data()._submittedAt)?.getTime() ?? 0
+    return at
+  })
+  // 若合併前總量超過 pageSize，下一頁仍可能有資料
+  const mergedTotal = new Set(pages.flat().map(d => d.id)).size
+  const hasMore = anyFullPage || mergedTotal > q.pageSize
+
+  return {
+    rows: sortBySubmittedAtDesc(mapDocs(merged)),
+    hasMore,
+    setCursors: nextCursors,
+  }
+}
+
+/** 使用者是否管理至少一張表（決定 Manager Browse UI）。 */
+export async function userIsManager(email: string): Promise<boolean> {
+  const role = await getUserRole(email)
+  const ids = await listManagedTemplateIds(role?.groups || [])
+  return ids.length > 0
 }
 
 export async function querySubmissions(
@@ -882,14 +984,15 @@ export async function querySubmissions(
   }
 
   const docs = await fetchIsolated(whereConstraints, sets, QUERY_DISPLAY_LIMIT)
-  const rows = sortBySubmittedAtDesc(applyLocalFilters(mapDocs(docs), q))
+  // 保留 VOID；遮罩與精修在 UI
+  const rows = sortBySubmittedAtDesc(mapDocs(docs))
 
   return { blocked: false, rows, count: rows.length }
 }
 
 /**
  * 完整匯出：不套用顯示上限，走 cursor 分頁把整個月份範圍取完。
- * 這是筆數超過顯示上限時的正式出口。
+ * 這是筆數超過顯示上限時的正式出口。含 VOID。
  */
 export async function exportAllSubmissions(
   q: SubmissionQuery,
@@ -910,7 +1013,7 @@ export async function exportAllSubmissions(
   }
 
   const docs = await fetchAllIsolated(whereConstraints, sets, pageSize, EXPORT_HARD_CAP)
-  return sortBySubmittedAtDesc(applyLocalFilters(mapDocs(docs), q))
+  return sortBySubmittedAtDesc(mapDocs(docs))
 }
 
 export async function getSubmission(id: string): Promise<Submission | null> {

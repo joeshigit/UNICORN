@@ -36,25 +36,67 @@ function matchesFieldValue(raw, wanted) {
   return String(raw) === wanted
 }
 
-function applyLocalFilters(rows, q) {
-  let out = rows
-  if (q.module) out = out.filter(r => r._templateModule === q.module)
-  if (q.action) out = out.filter(r => r._templateAction === q.action)
-  const status = q.status ?? 'ACTIVE'
-  if (status !== 'ALL') out = out.filter(r => r._status === status)
-  if (q.fieldKey && q.fieldValue) {
-    out = out.filter(r => matchesFieldValue(r[q.fieldKey], q.fieldValue))
+// 閘門取回後不再依 status 丟掉 VOID（畫面用 maskVoid）；精修改 applyRefineFilters
+function applyRefineFilters(rows, conditions) {
+  const active = (conditions || []).filter(c => {
+    if (!c.key) return false
+    if (c.op === 'eq' || c.op === 'neq') return c.value !== undefined && c.value !== ''
+    return true
+  })
+  if (active.length === 0) return rows.slice()
+
+  function isBlank(raw) {
+    if (raw === undefined || raw === null) return true
+    if (Array.isArray(raw)) return raw.length === 0
+    if (typeof raw === 'number') return false
+    return String(raw).trim() === ''
   }
-  return out
+
+  return rows.filter(row =>
+    active.every(c => {
+      const raw = row[c.key]
+      if (c.op === 'eq') return matchesFieldValue(raw, c.value)
+      if (c.op === 'neq') return !matchesFieldValue(raw, c.value)
+      if (c.op === 'hasValue') return !isBlank(raw)
+      if (c.op === 'blank') return isBlank(raw)
+      return true
+    })
+  )
 }
 
-/** 回傳 { blocked, count, fetched, rows }；fetched 記錄實際撈了幾筆 */
+function maskVoid(rows, showVoid) {
+  if (showVoid) return rows.slice()
+  return rows.filter(r => r._status !== 'VOID')
+}
+
+function resolveBrowseDefaultsForScope({ isSuperuser, isManager, managerScope }) {
+  if (isSuperuser) return { days: 14, pageSize: 100 }
+  if (isManager && managerScope === 'visible') return { days: 14, pageSize: 100 }
+  if (isManager && managerScope === 'mine') return { days: 30, pageSize: 50 }
+  return { days: 30, pageSize: 50 }
+}
+
+function browseCutoffDate(days, now = new Date()) {
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
+}
+
+function mergeBrowsePages(pages, pageSize, submittedAtMs) {
+  const merged = new Map()
+  for (const page of pages) {
+    for (const doc of page) merged.set(doc.id, doc)
+  }
+  return Array.from(merged.values())
+    .sort((a, b) => submittedAtMs(b) - submittedAtMs(a))
+    .slice(0, pageSize)
+}
+
+/** 回傳 { blocked, count, fetched, rows }；fetched 記錄實際撈了幾筆；rows 含 VOID */
 function gatedQuery(all, q, limit = QUERY_DISPLAY_LIMIT) {
   assertMonthRange(q)
   const matching = all.filter(r => inRange(r, q))
   const count = matching.length
   if (count > limit) return { blocked: true, count, fetched: 0, rows: [] }
-  return { blocked: false, count, fetched: matching.length, rows: applyLocalFilters(matching, q) }
+  return { blocked: false, count, fetched: matching.length, rows: matching.slice() }
 }
 
 // ---------- 欄位輸入模式（對應 keys.ts）----------
@@ -242,14 +284,23 @@ describe('月份範圍與計數閘門', () => {
       ...Array.from({ length: 400 }, () => row('2026-01', { school: ['培正中學'] })),
       ...Array.from({ length: 40 }, () => row('2026-01', { school: ['粵華中學'] })),
     ]
-    const r = gatedQuery(
-      all,
-      { fromMonth: '2026-01', toMonth: '2026-01', fieldKey: 'school', fieldValue: '粵華中學' },
-      500
-    )
+    const r = gatedQuery(all, { fromMonth: '2026-01', toMonth: '2026-01' }, 500)
     assert.equal(r.blocked, false)
     assert.equal(r.fetched, 440, '底層取回整個月份')
-    assert.equal(r.rows.length, 40, '精修後 40 筆，而且這 40 筆就是全部')
+    const refined = applyRefineFilters(r.rows, [
+      { key: 'school', op: 'eq', value: '粵華中學' },
+    ])
+    assert.equal(refined.length, 40, '精修後 40 筆，而且這 40 筆就是全部')
+  })
+
+  it('閘門取回保留 VOID，不依 status 丟棄', () => {
+    const all = [
+      row('2026-01', { _status: 'ACTIVE', id: 'a' }),
+      row('2026-01', { _status: 'VOID', id: 'v' }),
+    ]
+    const r = gatedQuery(all, { fromMonth: '2026-01', toMonth: '2026-01' }, 500)
+    assert.equal(r.rows.length, 2)
+    assert.ok(r.rows.some(x => x._status === 'VOID'))
   })
 
   it('縮小月份範圍一定會降低筆數，所以擋下必定可解', () => {
@@ -265,17 +316,19 @@ describe('月份範圍與計數閘門', () => {
     assert.equal(narrow.count, 300)
   })
 
-  it('前端過濾不會降低筆數（所以不能靠它解除擋下）', () => {
+  it('前端精修不會降低閘門筆數（所以不能靠它解除擋下）', () => {
     const all = Array.from({ length: 600 }, (_, i) =>
       row('2026-01', { school: i < 10 ? ['粵華中學'] : ['培正中學'] })
     )
-    const withKey = gatedQuery(
-      all,
-      { fromMonth: '2026-01', toMonth: '2026-01', fieldKey: 'school', fieldValue: '粵華中學' },
-      500
-    )
-    assert.equal(withKey.blocked, true, '加了跨表 KEY 仍然被擋，因為它是前端精修')
-    assert.equal(withKey.count, 600)
+    const gated = gatedQuery(all, { fromMonth: '2026-01', toMonth: '2026-01' }, 500)
+    assert.equal(gated.blocked, true, '精修前就被擋')
+    assert.equal(gated.count, 600)
+    // 若沒被擋，精修也只作用在已取回集合上
+    const unblocked = gatedQuery(all.slice(0, 100), { fromMonth: '2026-01', toMonth: '2026-01' }, 500)
+    const refined = applyRefineFilters(unblocked.rows, [
+      { key: 'school', op: 'eq', value: '粵華中學' },
+    ])
+    assert.ok(refined.length <= unblocked.fetched)
   })
 
   it('指定表格會降低筆數（因為它送進 Firestore）', () => {
@@ -536,5 +589,117 @@ describe('語意日期／時間', () => {
 describe('澳門時區月份', () => {
   it('回傳 YYYY-MM', () => {
     assert.match(macauMonth(new Date('2026-07-29T12:00:00Z')), /^\d{4}-\d{2}$/)
+  })
+})
+
+describe('Browse 角色預設', () => {
+  it('Submitter：30 天 × 50', () => {
+    assert.deepEqual(
+      resolveBrowseDefaultsForScope({ isSuperuser: false, isManager: false, managerScope: 'visible' }),
+      { days: 30, pageSize: 50 }
+    )
+  })
+
+  it('Manager 可見範圍：14 天 × 100', () => {
+    assert.deepEqual(
+      resolveBrowseDefaultsForScope({ isSuperuser: false, isManager: true, managerScope: 'visible' }),
+      { days: 14, pageSize: 100 }
+    )
+  })
+
+  it('Manager 只看我的：30 天 × 50', () => {
+    assert.deepEqual(
+      resolveBrowseDefaultsForScope({ isSuperuser: false, isManager: true, managerScope: 'mine' }),
+      { days: 30, pageSize: 50 }
+    )
+  })
+
+  it('Superuser：14 天 × 100', () => {
+    assert.deepEqual(
+      resolveBrowseDefaultsForScope({ isSuperuser: true, isManager: false, managerScope: 'visible' }),
+      { days: 14, pageSize: 100 }
+    )
+  })
+
+  it('cutoff 是 now 往前 days 天', () => {
+    const now = new Date('2026-07-30T12:00:00Z')
+    const c = browseCutoffDate(14, now)
+    assert.equal(c.getTime(), now.getTime() - 14 * 24 * 60 * 60 * 1000)
+  })
+})
+
+describe('作廢遮罩 maskVoid', () => {
+  const rows = [
+    { id: '1', _status: 'ACTIVE' },
+    { id: '2', _status: 'VOID' },
+    { id: '3', _status: 'ACTIVE' },
+  ]
+
+  it('預設隱藏 VOID，不改動原陣列', () => {
+    const shown = maskVoid(rows, false)
+    assert.equal(shown.length, 2)
+    assert.equal(rows.length, 3)
+  })
+
+  it('顯示作廢時全部保留', () => {
+    assert.equal(maskVoid(rows, true).length, 3)
+  })
+})
+
+describe('精修 applyRefineFilters', () => {
+  const rows = [
+    { id: '1', school: ['粵華中學'], note: '有', quantity1: 1 },
+    { id: '2', school: ['培正中學'], note: null, quantity1: null },
+    { id: '3', school: [], note: '', quantity1: 0 },
+  ]
+
+  it('eq', () => {
+    const out = applyRefineFilters(rows, [{ key: 'school', op: 'eq', value: '粵華中學' }])
+    assert.deepEqual(out.map(r => r.id), ['1'])
+  })
+
+  it('neq', () => {
+    const out = applyRefineFilters(rows, [{ key: 'school', op: 'neq', value: '粵華中學' }])
+    assert.deepEqual(out.map(r => r.id), ['2', '3'])
+  })
+
+  it('blank：null / [] / "" 算空白；數字 0 不算', () => {
+    const blankNote = applyRefineFilters(rows, [{ key: 'note', op: 'blank' }])
+    assert.deepEqual(blankNote.map(r => r.id), ['2', '3'])
+    const blankQty = applyRefineFilters(rows, [{ key: 'quantity1', op: 'blank' }])
+    assert.deepEqual(blankQty.map(r => r.id), ['2'])
+  })
+
+  it('hasValue', () => {
+    const out = applyRefineFilters(rows, [{ key: 'note', op: 'hasValue' }])
+    assert.deepEqual(out.map(r => r.id), ['1'])
+  })
+
+  it('多條件 AND', () => {
+    const out = applyRefineFilters(rows, [
+      { key: 'school', op: 'neq', value: '粵華中學' },
+      { key: 'quantity1', op: 'blank' },
+    ])
+    assert.deepEqual(out.map(r => r.id), ['2'])
+  })
+})
+
+describe('Browse merge trim', () => {
+  it('多來源去重後取最新 N', () => {
+    const a = [
+      { id: '1', t: 300 },
+      { id: '2', t: 200 },
+      { id: 'shared', t: 250 },
+    ]
+    const b = [
+      { id: 'shared', t: 250 },
+      { id: '3', t: 100 },
+      { id: '4', t: 400 },
+    ]
+    const out = mergeBrowsePages([a, b], 3, r => r.t)
+    assert.deepEqual(
+      out.map(r => r.id),
+      ['4', '1', 'shared']
+    )
   })
 })
