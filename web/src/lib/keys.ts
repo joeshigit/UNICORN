@@ -3,7 +3,8 @@
 //
 // KEY   = 系統統一的欄位名稱，跨所有表格相同（school、quantity1…）
 // LABEL = UI 顯示名稱，建表時自由設計（「入營學校」「駐守學校」…）
-// VALUE = 標準化的值，dropdown 一律來自 optionSet
+// VALUE = 標準化的值：dropdown/choice 通常來自 optionSet；
+//         標準問題若 valueModel=yesNo 則固定 是/否/不適用（不需 optionSet）
 //
 // KEY 有兩個來源：
 //   1. FIXED_KEYS       — 這裡寫死的通用欄位
@@ -179,17 +180,60 @@ export function resolveScaleValueLabels(field: Pick<FieldDefinition, 'scalePoint
 
 export const FREE_STANDARD_TYPES: FieldType[] = ['text', 'textarea', 'number', 'date', 'time']
 
-export function expectedValueModel(type: FieldType): StandardValueModel | null {
-  if (type === 'scale') return 'scale'
-  if (type === 'dropdown' || type === 'choice') return 'optionSet'
-  if (FREE_STANDARD_TYPES.includes(type)) return 'free'
+export const YES_NO_VALUES = ['是', '否'] as const
+export const YES_NO_NA_VALUES = ['是', '否', '不適用'] as const
+
+export function yesNoValueOrder(allowNa: boolean): readonly string[] {
+  return allowNa ? YES_NO_NA_VALUES : YES_NO_VALUES
+}
+
+export function yesNoOptions(allowNa: boolean): ScaleValueLabel[] {
+  return yesNoValueOrder(allowNa).map(value => ({ value, label: value }))
+}
+
+export function isYesNoField(field: Pick<FieldDefinition, 'yesNoAllowNa'>): boolean {
+  return field.yesNoAllowNa !== undefined
+}
+
+/** 欄位層級：choice 若為 yesNo 標準題則不走 optionSet */
+export function fieldUsesOptionSet(field: Pick<FieldDefinition, 'type' | 'yesNoAllowNa'>): boolean {
+  return usesOptionSet(field.type) && !isYesNoField(field)
+}
+
+/** 題型可選的答案方式（UI／驗證用）。choice 有 optionSet 與 yesNo 兩種，無單一預設。 */
+export function allowedValueModels(type: FieldType): StandardValueModel[] | null {
+  if (type === 'scale') return ['scale']
+  if (type === 'dropdown') return ['optionSet']
+  if (type === 'choice') return ['optionSet', 'yesNo']
+  if (FREE_STANDARD_TYPES.includes(type)) return ['free']
   return null
 }
 
+/**
+ * @deprecated 僅供 free 題型 UI 提示。choice 請用 allowedValueModels（optionSet | yesNo）。
+ */
+export function expectedValueModel(type: FieldType): StandardValueModel | null {
+  const allowed = allowedValueModels(type)
+  if (!allowed || allowed.length !== 1) return null
+  return allowed[0]
+}
+
+function isValidTypeValueModelPair(type: FieldType, valueModel: StandardValueModel): boolean {
+  if (type === 'scale') return valueModel === 'scale'
+  if (type === 'dropdown') return valueModel === 'optionSet'
+  if (type === 'choice') return valueModel === 'optionSet' || valueModel === 'yesNo'
+  if (FREE_STANDARD_TYPES.includes(type)) return valueModel === 'free'
+  return false
+}
+
 export function validateTypeValueModel(type: FieldType, valueModel: StandardValueModel): string | null {
-  const expected = expectedValueModel(type)
-  if (!expected) return `標準問題不支援題型「${type}」`
-  if (valueModel !== expected) return `題型「${type}」的答案模型必須是 ${expected}`
+  if (!isValidTypeValueModelPair(type, valueModel)) {
+    if (type === 'dropdown') return `題型「dropdown」的答案模型必須是 optionSet`
+    if (type === 'choice') return `題型「choice」的答案模型必須是 optionSet 或 yesNo`
+    if (type === 'scale') return `題型「scale」的答案模型必須是 scale`
+    if (FREE_STANDARD_TYPES.includes(type)) return `題型「${type}」的答案模型必須是 free`
+    return `標準問題不支援題型「${type}」`
+  }
   return null
 }
 
@@ -237,7 +281,7 @@ export function assertFieldMatchesStandard(
   field: FieldDefinition,
   standard: Pick<
     StandardKey,
-    'key' | 'type' | 'valueModel' | 'optionSetId' | 'scalePoints' | 'scaleValueLabels'
+    'key' | 'type' | 'valueModel' | 'optionSetId' | 'scalePoints' | 'scaleValueLabels' | 'allowNa'
   >,
   optionSetCode?: string | null
 ): string | null {
@@ -247,6 +291,16 @@ export function assertFieldMatchesStandard(
   }
   const vmErr = validateTypeValueModel(standard.type, standard.valueModel)
   if (vmErr) return vmErr
+
+  if (standard.valueModel === 'yesNo') {
+    if (field.optionSetId) return `「${standard.key}」是/否題不應綁標準選項`
+    if (field.multiple) return `「${standard.key}」是/否題不可複選`
+    if (field.yesNoAllowNa !== standard.allowNa) {
+      return `「${standard.key}」的是/否變體由標準問題鎖定`
+    }
+    if (field.scaleValueLabels?.length) return `「${standard.key}」不是量表，不應有量表標籤`
+    return null
+  }
 
   if (standard.valueModel === 'optionSet') {
     if (!field.optionSetId) return `「${standard.key}」要選一個選項清單`
@@ -270,6 +324,7 @@ export function assertFieldMatchesStandard(
 
   // free
   if (field.optionSetId) return `「${standard.key}」是自由填寫，不應綁標準選項`
+  if (field.yesNoAllowNa !== undefined) return `「${standard.key}」是自由填寫，不應有是/否契約`
   if (field.scaleValueLabels?.length) return `「${standard.key}」不是量表，不應有量表標籤`
   return null
 }
@@ -287,6 +342,7 @@ export function applyStandardToField(
     multiple: undefined,
     scalePoints: undefined,
     scaleValueLabels: undefined,
+    yesNoAllowNa: undefined,
     presetValue: undefined,
   }
   if (!next.label.trim()) next.label = standard.defaultLabel
@@ -298,13 +354,16 @@ export function applyStandardToField(
     next.scaleValueLabels = standard.scaleValueLabels
       ? copyScaleValueLabels(standard.scaleValueLabels)
       : undefined
+  } else if (standard.valueModel === 'yesNo') {
+    next.yesNoAllowNa = standard.allowNa
+    next.multiple = undefined
   }
 
   if (!canPresetFieldType(next.type)) next.inputMode = undefined
   return next
 }
 
-/** dropdown／choice 都用 optionSet；scale 用系統刻度 */
+/** dropdown／choice 若綁 optionSet 才用選項池；yesNo 標準題不走 optionSet */
 export function usesOptionSet(type: FieldType): boolean {
   return type === 'dropdown' || type === 'choice'
 }

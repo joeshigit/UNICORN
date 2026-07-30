@@ -18,7 +18,7 @@ import {
   getUserRole,
   newSubmissionId,
 } from '@/lib/db'
-import { SCALE_DIRECTION_HINT, resolveInitialValue, resolveScaleValueLabels } from '@/lib/keys'
+import { SCALE_DIRECTION_HINT, resolveInitialValue, resolveScaleValueLabels, yesNoValueOrder } from '@/lib/keys'
 import type { FileInfo, OptionItem, Submission, Template } from '@/types'
 
 function SubmitForm() {
@@ -198,7 +198,12 @@ function SubmitForm() {
 
         payload[field.key] = value
 
-        if ((field.type === 'dropdown' || field.type === 'choice') && field.optionSetId) {
+        if (field.yesNoAllowNa !== undefined) {
+          const order = [...yesNoValueOrder(field.yesNoAllowNa)]
+          optionOrder[field.key] = order
+          const picked = Array.isArray(value) ? (value as string[]) : value ? [value as string] : []
+          optionLabels[field.key] = picked.join('、')
+        } else if ((field.type === 'dropdown' || field.type === 'choice') && field.optionSetId) {
           const items = optionsBySet[field.optionSetId] || []
           optionOrder[field.key] = items.map(i => i.value)
 

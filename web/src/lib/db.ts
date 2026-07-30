@@ -48,6 +48,9 @@ import {
   isSystemReservedCode,
   usesOptionSet,
   usesThreeShape,
+  yesNoValueOrder,
+  isYesNoField,
+  fieldUsesOptionSet,
 } from './keys'
 import type {
   FieldDefinition,
@@ -282,6 +285,8 @@ export interface StandardKeyCreateInput {
   optionSetId?: string
   scalePoints?: ScalePoints
   scaleValueLabels?: ScaleValueLabel[]
+  /** yesNo only; required boolean when valueModel is yesNo */
+  allowNa?: boolean
 }
 
 export interface StandardKeyUpdateInput {
@@ -303,6 +308,12 @@ function assertCreatableStandard(input: StandardKeyCreateInput): void {
   } else if (input.valueModel === 'scale') {
     const labelErr = validateScaleValueLabels(input.scalePoints, input.scaleValueLabels)
     if (labelErr) throw new Error(labelErr)
+  } else if (input.valueModel === 'yesNo') {
+    if (input.type !== 'choice') throw new Error('是/否標準問題的題型必須是 choice')
+    if (typeof input.allowNa !== 'boolean') throw new Error('請指定是否含「不適用」')
+    if (input.optionSetId || input.scalePoints || input.scaleValueLabels?.length) {
+      throw new Error('是/否型標準問題不能帶標準選項或量表契約')
+    }
   } else if (input.optionSetId || input.scalePoints || input.scaleValueLabels?.length) {
     throw new Error('自由填寫型標準問題不能帶標準選項或量表契約')
   }
@@ -327,6 +338,7 @@ export async function createStandardKey(input: StandardKeyCreateInput, userEmail
   const id = newId('standardKeys')
   const isScale = input.valueModel === 'scale'
   const isOption = input.valueModel === 'optionSet'
+  const isYesNo = input.valueModel === 'yesNo'
   await setDoc(
     doc(db, 'standardKeys', id),
     stripUndefined({
@@ -340,6 +352,7 @@ export async function createStandardKey(input: StandardKeyCreateInput, userEmail
       scaleValueLabels: isScale
         ? input.scaleValueLabels!.map(l => ({ value: l.value, label: l.label.trim() }))
         : undefined,
+      allowNa: isYesNo ? input.allowNa : undefined,
       status: 'active' as StandardKeyStatus,
       createdBy: userEmail,
       createdAt: serverTimestamp(),
@@ -551,10 +564,16 @@ function cleanFields(fields: FieldDefinition[]): FieldDefinition[] {
       required: !!f.required,
       order: i,
       helpText: f.helpText?.trim() || undefined,
-      optionSetId: usesOptionSet(f.type) ? f.optionSetId : undefined,
-      multiple: f.type === 'choice' && f.multiple ? true : f.type === 'dropdown' && f.multiple ? true : undefined,
+      optionSetId: fieldUsesOptionSet(f) ? f.optionSetId : undefined,
+      multiple:
+        f.type === 'choice' && fieldUsesOptionSet(f) && f.multiple
+          ? true
+          : f.type === 'dropdown' && f.multiple
+            ? true
+            : undefined,
       scalePoints,
       scaleValueLabels: cleanScaleValueLabels(f, scalePoints),
+      yesNoAllowNa: isYesNoField(f) ? f.yesNoAllowNa : undefined,
       inputMode,
       presetValue,
     })
@@ -724,7 +743,9 @@ function buildSubmissionDoc(
       const order =
         field.type === 'scale'
           ? resolveScaleValueLabels(field).map(o => o.value)
-          : optionOrder[field.key]
+          : isYesNoField(field)
+            ? [...yesNoValueOrder(field.yesNoAllowNa === true)]
+            : optionOrder[field.key]
       const picked = canonicalOrder(asArray(values[field.key]), order)
       payload[field.key] = picked
       payload[combinedKey(field.key)] = picked.join(', ')
