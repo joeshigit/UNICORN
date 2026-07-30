@@ -901,7 +901,8 @@ function assertFieldMatchesStandard(field, standard, optionSetCode) {
   }
   if (standard.valueModel === 'optionSet') {
     if (!field.optionSetId) return '要選選項清單'
-    if (optionSetCode != null && optionSetCode !== field.key) return 'code 必須等於 KEY'
+    // Registry: optionSet.code must match standard.key (form-local field.key may differ — R14)
+    if (optionSetCode != null && optionSetCode !== standard.key) return 'code 必須等於標準 KEY'
     return null
   }
   if (standard.valueModel === 'scale') {
@@ -1055,7 +1056,25 @@ describe('標準資料契約', () => {
       required: false,
       order: 0,
     }
-    assert.equal(assertFieldMatchesStandard(field, std, 'dept'), 'code 必須等於 KEY')
+    assert.equal(assertFieldMatchesStandard(field, std, 'dept'), 'code 必須等於標準 KEY')
+    assert.equal(assertFieldMatchesStandard(field, std, 'school'), null)
+  })
+
+  it('R14：optionSet code 對齊 standard.key，不是要求等於任意 field.key 語意', () => {
+    const std = {
+      key: 'school',
+      type: 'dropdown',
+      valueModel: 'optionSet',
+      optionSetId: 'm1',
+    }
+    const field = {
+      key: 'school',
+      type: 'dropdown',
+      optionSetId: 'm1',
+      label: '入營學校',
+      required: false,
+      order: 0,
+    }
     assert.equal(assertFieldMatchesStandard(field, std, 'school'), null)
   })
 

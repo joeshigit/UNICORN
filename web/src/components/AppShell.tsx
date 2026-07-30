@@ -36,6 +36,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const [menuOpen, setMenuOpen] = useState(false)
 
+  const isFormBuilder = pathname.startsWith('/forms/edit')
+
   useEffect(() => {
     if (!loading && !user) router.replace('/')
   }, [loading, user, router])
@@ -89,6 +91,47 @@ export function AppShell({ children }: { children: ReactNode }) {
       })}
     </nav>
   )
+
+  // Form builder: hamburger navigation (desktop + mobile); full-width canvas
+  if (isFormBuilder) {
+    return (
+      <div className="min-h-screen">
+        <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              onClick={() => setMenuOpen(v => !v)}
+              aria-label="開啟導覽"
+            >
+              {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+            <Link href="/fill" className="flex items-center gap-2 font-semibold">
+              <Sparkles className="h-5 w-5 text-unicorn-600" />
+              {APP_NAME}
+            </Link>
+          </div>
+          <p className="truncate text-xs text-slate-400 max-w-[40%]">{email}</p>
+        </header>
+
+        {menuOpen && (
+          <div className="border-b border-slate-200 bg-white p-4 shadow-sm">
+            {nav}
+            <button
+              type="button"
+              className="btn-ghost mt-2 w-full justify-start"
+              onClick={() => signOut().then(() => router.replace('/'))}
+            >
+              <LogOut className="h-4 w-4" />
+              登出
+            </button>
+          </div>
+        )}
+
+        <main className="min-w-0 px-3 py-4 sm:px-5 sm:py-6">{children}</main>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen lg:flex">

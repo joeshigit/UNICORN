@@ -304,7 +304,9 @@ export function assertFieldMatchesStandard(
 
   if (standard.valueModel === 'optionSet') {
     if (!field.optionSetId) return `「${standard.key}」要選一個選項清單`
-    if (optionSetCode != null && optionSetCode !== field.key) {
+    // Registry contract: optionSet.code must match the standard KEY (not the form-local field.key).
+    // Form instances may use a different field.key while keeping optionSetId → same code family (R14).
+    if (optionSetCode != null && optionSetCode !== standard.key) {
       return `「${standard.key}」只能使用 code 相同的標準選項（含子集）`
     }
     return null
@@ -499,6 +501,67 @@ export function validateOptionSetCode(code: string): string | null {
     return `「${code.trim()}」是系統保留 KEY，不能當作一般業務 KEY 新建`
   }
   return null
+}
+
+/**
+ * 建表欄位系統 KEY（form-local identity）。
+ * 允許 FIXED_KEYS（可從題庫模板繼承）；自訂 KEY 走 L1+L2，禁 derived／legacy／reserved。
+ */
+export function validateTemplateFieldKey(code: string): string | null {
+  const trimmed = code.trim()
+  if (!trimmed) return '請輸入系統 KEY'
+  if (isFixedKey(trimmed)) return null
+  const formatErr = formatCanonicalKeyError(trimmed, canonicalKeyViolation(trimmed))
+  if (formatErr) return formatErr
+  if (isDerivedKey(trimmed)) {
+    return `KEY 不能用 ${DERIVED_SUFFIXES.join(' / ')} 結尾，這些是系統自動產生的欄位`
+  }
+  if (isLegacyDateKey(trimmed)) {
+    return `「${trimmed}」已退役，請改用語意化日期／時間 KEY`
+  }
+  if (isSystemReservedCode(trimmed)) {
+    return `「${trimmed}」是系統保留 KEY，不能當作一般業務 KEY`
+  }
+  return null
+}
+
+export function isKeyUsedInForm(
+  key: string,
+  fields: Array<{ key: string }>,
+  exceptIndex?: number
+): boolean {
+  const trimmed = key.trim()
+  if (!trimmed) return false
+  return fields.some((f, i) => i !== exceptIndex && f.key === trimmed)
+}
+
+/** UI：回答方式標籤（不是 KEY） */
+export function answerFormatLabel(field: Pick<FieldDefinition, 'type' | 'yesNoAllowNa'>): string {
+  if (isYesNoField(field)) return '是／否'
+  switch (field.type) {
+    case 'text':
+      return '短文字'
+    case 'textarea':
+      return '長文字'
+    case 'number':
+      return '數字'
+    case 'date':
+      return '日期'
+    case 'time':
+      return '時間'
+    case 'datetime':
+      return '日期與時間'
+    case 'scale':
+      return '量表'
+    case 'dropdown':
+      return '下拉選單'
+    case 'choice':
+      return '選擇題'
+    case 'file':
+      return '檔案上傳'
+    default:
+      return field.type
+  }
 }
 
 /** YYYY-MM-DD */
