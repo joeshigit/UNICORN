@@ -1,0 +1,20 @@
+[
+  {
+    "origin": [
+      "https://unicorn-dcs.web.app",
+      "https://unicorn-dcs.firebaseapp.com",
+      "http://localhost:3000",
+      "http://127.0.0.1:5000"
+    ],
+    "method": ["GET", "HEAD", "PUT", "POST", "DELETE"],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Length",
+      "Content-Disposition",
+      "Content-Encoding",
+      "Cache-Control",
+      "x-goog-meta-*"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

@@ -1,25 +1,100 @@
 rules_version = '2';
+
+// ============================================
+// 🦄 UNICORN Capture — Storage 規則
+//
+// 路徑：uploads/{uid}/{submissionId}/{fieldKey}/{fileId}
+// ============================================
+
 service firebase.storage {
   match /b/{bucket}/o {
-    // 只有經過驗證且是公司網域的用戶才能存取
-    function isCompanyUser() {
-      return request.auth != null && 
-             request.auth.token.email.matches('.*@dbyv\\.org$');
+
+    function isOrgUser() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.matches('.*@dbyv\\.org$');
     }
-    
-    // uploads 資料夾
-    match /uploads/{allPaths=**} {
-      // 讀取：公司用戶都可以
-      allow read: if isCompanyUser();
-      // 寫入：只允許透過 Cloud Functions（服務帳號）
-      allow write: if false;
+
+    function isSuperuser() {
+      return isOrgUser() && request.auth.token.email.lower() == 'joeshi@dbyv.org';
+    }
+
+    function under20MB() {
+      return request.resource != null
+        && request.resource.size < 20 * 1024 * 1024;
+    }
+
+    function approvedMime() {
+      return request.resource.contentType is string
+        && (
+          request.resource.contentType.matches('image/.*')
+          || request.resource.contentType == 'application/pdf'
+          || request.resource.contentType == 'application/msword'
+          || request.resource.contentType == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          || request.resource.contentType == 'application/vnd.ms-excel'
+          || request.resource.contentType == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          || request.resource.contentType == 'application/vnd.ms-powerpoint'
+          || request.resource.contentType == 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+          || request.resource.contentType == 'text/plain'
+          || request.resource.contentType == 'text/csv'
+          || request.resource.contentType == 'application/zip'
+        );
+    }
+
+    function hasValidSession(uid, submissionId) {
+      let session = firestore.get(/databases/(default)/documents/uploadSessions/$(submissionId));
+      return firestore.exists(/databases/(default)/documents/uploadSessions/$(submissionId))
+        && session.data.uid == uid
+        && session.data.uid == request.auth.uid
+        && session.data.expiresAt is timestamp
+        && session.data.expiresAt > request.time;
+    }
+
+    function submissionExists(submissionId) {
+      return firestore.exists(/databases/(default)/documents/submissions/$(submissionId));
+    }
+
+    function isSubmissionOwner(submissionId) {
+      let sub = firestore.get(/databases/(default)/documents/submissions/$(submissionId));
+      return submissionExists(submissionId)
+        && sub.data._submitterUid == request.auth.uid;
+    }
+
+    function isManagerOfSubmission(submissionId) {
+      let sub = firestore.get(/databases/(default)/documents/submissions/$(submissionId));
+      let templateId = sub.data._templateId;
+      let tpl = firestore.get(/databases/(default)/documents/templates/$(templateId));
+      let role = firestore.get(/databases/(default)/documents/userRoles/$(request.auth.token.email.lower()));
+      return submissionExists(submissionId)
+        && firestore.exists(/databases/(default)/documents/templates/$(templateId))
+        && firestore.exists(/databases/(default)/documents/userRoles/$(request.auth.token.email.lower()))
+        && tpl.data.managerGroups is list
+        && role.data.groups is list
+        && role.data.groups.hasAny(tpl.data.managerGroups);
+    }
+
+    function canReadFinal(uid, submissionId) {
+      return isSuperuser()
+        || request.auth.uid == uid
+        || isSubmissionOwner(submissionId)
+        || isManagerOfSubmission(submissionId);
+    }
+
+    match /uploads/{uid}/{submissionId}/{fieldKey}/{fileId} {
+      allow read: if isOrgUser() && canReadFinal(uid, submissionId);
+
+      allow create: if isOrgUser()
+        && request.auth.uid == uid
+        && hasValidSession(uid, submissionId)
+        && under20MB()
+        && approvedMime();
+
+      allow delete: if isOrgUser()
+        && request.auth.uid == uid
+        && hasValidSession(uid, submissionId)
+        && !submissionExists(submissionId);
+
+      allow update: if false;
     }
   }
 }
-
-
-
-
-
-
-
