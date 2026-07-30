@@ -180,6 +180,17 @@ function StandardsPageInner() {
     }
   }
 
+  const handleReactivate = async (row: StandardKey) => {
+    if (row.status === 'active') return
+    if (!confirm(`重新啟用標準「${row.key}」？建表時將可再次選用。`)) return
+    try {
+      await updateStandardKey(row.id!, { status: 'active' })
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '重新啟用失敗')
+    }
+  }
+
   const handleSaveMeta = async (row: StandardKey, meaningVal: string, labelVal: string) => {
     try {
       await updateStandardKey(row.id!, { meaning: meaningVal, defaultLabel: labelVal })
@@ -405,6 +416,7 @@ function StandardsPageInner() {
               key={row.id}
               row={row}
               onDeprecate={() => handleDeprecate(row)}
+              onReactivate={() => handleReactivate(row)}
               onSaveMeta={(m, l) => handleSaveMeta(row, m, l)}
             />
           ))}
@@ -417,10 +429,12 @@ function StandardsPageInner() {
 function StandardRow({
   row,
   onDeprecate,
+  onReactivate,
   onSaveMeta,
 }: {
   row: StandardKey
   onDeprecate: () => void
+  onReactivate: () => void
   onSaveMeta: (meaning: string, label: string) => void
 }) {
   const [meaning, setMeaning] = useState(row.meaning)
@@ -442,9 +456,13 @@ function StandardRow({
             {row.status === 'deprecated' ? ' · 已停用' : ''}
           </span>
         </div>
-        {row.status === 'active' && (
+        {row.status === 'active' ? (
           <button type="button" className="btn-ghost btn-sm text-amber-700" onClick={onDeprecate}>
             停用
+          </button>
+        ) : (
+          <button type="button" className="btn-ghost btn-sm text-emerald-700" onClick={onReactivate}>
+            重新啟用
           </button>
         )}
       </div>

@@ -127,6 +127,8 @@ before(async () => {
       type: 'text',
       valueModel: 'free',
       status: 'active',
+      meaning: '緊急聯絡',
+      defaultLabel: '緊急聯絡電話',
     })
 
     await setDoc(doc(d, 'submissions', 'own1'), submission())
@@ -372,6 +374,23 @@ describe('Superuser', () => {
 
   it('讀標準資料', async () => {
     assert.ok((await getDoc(doc(fs(SUPER), 'standardKeys/sk1'))).exists())
+  })
+
+  it('Superuser 可更新標準資料的 meaning/defaultLabel', async () => {
+    await updateDoc(doc(fs(SUPER), 'standardKeys/sk0'), {
+      meaning: '更新後的意義',
+      defaultLabel: '更新後的顯示名稱',
+    })
+    const snap = await getDoc(doc(fs(SUPER), 'standardKeys/sk0'))
+    assert.equal(snap.data().meaning, '更新後的意義')
+    assert.equal(snap.data().defaultLabel, '更新後的顯示名稱')
+  })
+
+  it('Superuser 可停用並重新啟用標準 KEY', async () => {
+    await updateDoc(doc(fs(SUPER), 'standardKeys/sk0'), { status: 'deprecated' })
+    assert.equal((await getDoc(doc(fs(SUPER), 'standardKeys/sk0'))).data().status, 'deprecated')
+    await updateDoc(doc(fs(SUPER), 'standardKeys/sk0'), { status: 'active' })
+    assert.equal((await getDoc(doc(fs(SUPER), 'standardKeys/sk0'))).data().status, 'active')
   })
 
   it('指派群組', () =>

@@ -161,6 +161,24 @@ before(async () => {
       type: 'text',
       valueModel: 'free',
       status: 'active',
+      meaning: '緊急聯絡',
+      defaultLabel: '緊急聯絡電話',
+    })
+    await setDoc(doc(d, 'standardKeys/sk_scale'), {
+      key: 'serEvaluation',
+      type: 'scale',
+      valueModel: 'scale',
+      scalePoints: 5,
+      scaleValueLabels: [
+        { value: 1, label: '非常不滿意' },
+        { value: 2, label: '不滿意' },
+        { value: 3, label: '普通' },
+        { value: 4, label: '滿意' },
+        { value: 5, label: '非常滿意' },
+      ],
+      status: 'active',
+      meaning: '服務評價',
+      defaultLabel: '服務評價',
     })
   })
 })
@@ -380,6 +398,33 @@ describe('模板、選項池與權限', () => {
 
   it('任何人不能刪標準資料', () =>
     assertDenied(() => deleteDoc(doc(fs(SUPER), 'standardKeys/sk_seed'))))
+
+  it('Superuser 不能改標準 KEY 的 key', () =>
+    assertDenied(() =>
+      updateDoc(doc(fs(SUPER), 'standardKeys/sk_seed'), { key: 'hackedKey' })
+    ))
+
+  it('Superuser 不能改標準 KEY 的 type', () =>
+    assertDenied(() =>
+      updateDoc(doc(fs(SUPER), 'standardKeys/sk_seed'), { type: 'number' })
+    ))
+
+  it('Superuser 不能改標準 KEY 的 valueModel', () =>
+    assertDenied(() =>
+      updateDoc(doc(fs(SUPER), 'standardKeys/sk_seed'), { valueModel: 'scale' })
+    ))
+
+  it('Superuser 不能改量表標準的 scaleValueLabels', () =>
+    assertDenied(() =>
+      updateDoc(doc(fs(SUPER), 'standardKeys/sk_scale'), {
+        scaleValueLabels: [{ value: 1, label: '被改了' }],
+      })
+    ))
+
+  it('Superuser 不能改標準 KEY 的 status 為非法值', () =>
+    assertDenied(() =>
+      updateDoc(doc(fs(SUPER), 'standardKeys/sk_seed'), { status: 'deleted' })
+    ))
 
   it('一般使用者不能改別人的 userRoles', () =>
     assertDenied(() =>
