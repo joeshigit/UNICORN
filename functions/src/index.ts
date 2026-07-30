@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin'
 import { google } from 'googleapis'
 import Busboy from 'busboy'
 import cors from 'cors'
+import { validateCreatableUniversalKeyCode } from './universalKeyValidation'
 
 // 載入服務帳號金鑰（在編譯時載入）
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -727,13 +728,10 @@ export const createOptionSet = functions
           res.status(400).json({ error: 'Missing code (machine name)' })
           return
         }
-        
-        // 驗證 code 格式：只允許小寫字母開頭，包含小寫字母、數字、底線
-        const codeRegex = /^[a-z][a-z0-9_]*$/
-        if (!codeRegex.test(code)) {
-          res.status(400).json({ 
-            error: 'Invalid code format. Must start with lowercase letter and contain only lowercase letters, numbers, and underscores.' 
-          })
+
+        const codeErr = validateCreatableUniversalKeyCode(code)
+        if (codeErr) {
+          res.status(400).json({ error: codeErr })
           return
         }
         
@@ -890,13 +888,10 @@ export const migrateOptionSetCode = functions
           res.status(400).json({ error: 'Missing optionSetId or code' })
           return
         }
-        
-        // 驗證 code 格式
-        const codeRegex = /^[a-z][a-z0-9_]*$/
-        if (!codeRegex.test(code)) {
-          res.status(400).json({ 
-            error: 'Invalid code format. Must start with lowercase letter and contain only lowercase letters, numbers, and underscores.' 
-          })
+
+        const codeErr = validateCreatableUniversalKeyCode(code)
+        if (codeErr) {
+          res.status(400).json({ error: codeErr })
           return
         }
         
@@ -1501,6 +1496,12 @@ export const reviewOptionSetDraft = functions
         } else {
           // Approve: create formal OptionSet
           const { code, name, description, items } = draftData
+
+          const codeErr = validateCreatableUniversalKeyCode(code)
+          if (codeErr) {
+            res.status(400).json({ error: codeErr })
+            return
+          }
           
           // Check label consistency with existing OptionSets
           const labelCheck = await checkLabelConsistency(db, code, items || [])

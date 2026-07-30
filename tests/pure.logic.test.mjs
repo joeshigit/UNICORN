@@ -5,6 +5,11 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import {
+  canonicalKeyViolation,
+  isCanonicalUniversalKey,
+  UNPREFIXED_KEY_WHITELIST,
+} from '../shared/universalKeyValidation.mjs'
 
 const FIRESTORE_IN_LIMIT = 30
 const QUERY_DISPLAY_LIMIT = 500
@@ -997,5 +1002,65 @@ describe('標準資料契約', () => {
     assert.deepEqual(optionSetCodesWithoutStandard(['school', 'dept'], [{ key: 'school' }]), [
       'dept',
     ])
+  })
+})
+
+// ---------- Universal KEY naming（L1 shared + L2 policy 镜像 keys.ts）----------
+
+const SYSTEM_RESERVED = ['module', 'action', 'managerGroup']
+
+/** 镜像 web/src/lib/keys.ts validateOptionSetCode 的 L2 reserved 检查 */
+function validateOptionSetCodeMirror(code) {
+  if (canonicalKeyViolation(code)) return 'format'
+  if (SYSTEM_RESERVED.includes(code.trim())) return 'reserved'
+  return null
+}
+
+describe('Universal KEY naming L1 (shared/universalKeyValidation.mjs)', () => {
+  it('accepts category-prefixed camelCase', () => {
+    assert.equal(isCanonicalUniversalKey('demo_chineseName'), true)
+    assert.equal(isCanonicalUniversalKey('coun_riskSelfHarm'), true)
+    assert.equal(isCanonicalUniversalKey('fin_invoiceNo'), true)
+  })
+
+  it('accepts PO whitelist school only', () => {
+    assert.deepEqual(UNPREFIXED_KEY_WHITELIST, ['school'])
+    assert.equal(isCanonicalUniversalKey('school'), true)
+  })
+
+  it('rejects snake_case tail', () => {
+    assert.equal(isCanonicalUniversalKey('demo_chinese_name'), false)
+    assert.equal(canonicalKeyViolation('demo_chinese_name'), 'prefixed_invalid_tail')
+  })
+
+  it('rejects camelCase without prefix', () => {
+    assert.equal(isCanonicalUniversalKey('demoChineseName'), false)
+    assert.equal(canonicalKeyViolation('demoChineseName'), 'camel_without_prefix')
+  })
+
+  it('rejects bare semantic keys', () => {
+    for (const key of ['name', 'phone', 'email']) {
+      assert.equal(isCanonicalUniversalKey(key), false)
+      assert.equal(canonicalKeyViolation(key), 'bare_semantic')
+    }
+  })
+
+  it('rejects unprefixed keys not on whitelist', () => {
+    assert.equal(isCanonicalUniversalKey('costcenter'), false)
+    assert.equal(canonicalKeyViolation('costcenter'), 'unprefixed_not_whitelisted')
+    assert.equal(canonicalKeyViolation('costCenter'), 'camel_without_prefix')
+  })
+})
+
+describe('Universal KEY naming L2 policy (mirrors keys.ts)', () => {
+  it('optionSet.code and standardKeys.key share format', () => {
+    assert.equal(validateOptionSetCodeMirror('demo_chineseName'), null)
+    assert.equal(validateOptionSetCodeMirror('school'), null)
+    assert.equal(validateOptionSetCodeMirror('name'), 'format')
+  })
+
+  it('system reserved codes fail format before reserved guard (seeded only via ensureCoreOptionSets)', () => {
+    assert.equal(validateOptionSetCodeMirror('managerGroup'), 'format')
+    assert.equal(validateOptionSetCodeMirror('module'), 'format')
   })
 })

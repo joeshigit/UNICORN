@@ -190,6 +190,10 @@ function OptionsPageInner() {
       {creating && (
         <div className="card mb-5 space-y-4 p-6">
           <h2 className="font-semibold">新增一個 KEY</h2>
+          <p className="text-sm text-slate-600">
+            KEY 是系統 identifier（例：<code className="font-mono">demo_chineseName</code> 或白名單{' '}
+            <code className="font-mono">school</code>）；清單名稱是你自己看的中文。前綴只是命名慣例，是否為「標準問題」請到標準問題登記。
+          </p>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="label mb-1">KEY（英文，跨表格統一）</label>
@@ -197,7 +201,7 @@ function OptionsPageInner() {
                 className={`field font-mono ${codeError || codeTaken ? 'field-error' : ''}`}
                 value={newCode}
                 onChange={e => setNewCode(e.target.value)}
-                placeholder="school"
+                placeholder="demo_chineseName"
               />
               {codeError && <p className="mt-1 text-sm text-red-600">{codeError}</p>}
               {!codeError && codeTaken && (

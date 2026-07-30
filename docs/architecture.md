@@ -4,6 +4,28 @@
 
 ---
 
+## 0. Universal KEY 命名原则（必读）
+
+> **Naming convention determines how a new Universal KEY is named. `standardKeys` determines whether that KEY is an organizational standard.**
+
+三件事分开，不要混为一谈：
+
+| 问题 | 由谁决定 | 例子 |
+|------|----------|------|
+| KEY **长什么样** | 命名规范（L1+L2 validator） | `demo_chineseName`、`school`（白名单） |
+| KEY **是不是组织标准** | `standardKeys` 登记 | 同一 KEY 可只是 optionSet，也可升格 standard |
+| KEY **对应什么 VALUE 字典** | `optionSets`（Master code） | `school` → 学校清单 |
+
+**前缀 ≠ Standard Key。** `demo_chineseName` 可以只是标准选项（VALUE dictionary），也可以在标准问题另作组织标准登记——两者不冲突。
+
+新建 business KEY 格式：
+
+- 分类前缀 + camelCase：`demo_chineseName`、`coun_riskSelfHarm`
+- PO 白名单无前缀例外（v1 仅 `school`）
+- 禁止裸 KEY：`name`、`phone`、`email`（语义过广）
+
+---
+
 ## 1. 四層架構
 
 | 層 | Collection | 性質 |
@@ -249,11 +271,13 @@ orderBy('_submittedAt', 'desc')
 
 組織認定可跨表重用的資料概念：規定 **KEY** 與 **答案格式**；不是題幹貼上庫，也不自動建立 Firestore 索引。
 
+**KEY 命名与 `optionSet.code` 共用同一套 canonical format；登记到 `standardKeys` 才代表组织标准**（见 §0）。
+
 | valueModel | 例子 | 契約 |
 |------------|------|------|
-| `free` | `emerContact` | text／number／date… 自由值 |
+| `free` | `demo_chineseName` | text／number／date… 自由值 |
 | `optionSet` | 既有 `school` | KEY＝optionSet.code（MVP）；可選同 code 子集 |
-| `scale` | `serEvaluation` | `scalePoints`＋`scaleValueLabels`（VALUE 必須 `"1"…"N"`） |
+| `scale` | `prog_satisfactionRating` | `scalePoints`＋`scaleValueLabels`（VALUE 必須 `"1"…"N"`） |
 
 - Active 答案契約 **immutable**；語義變更 → deprecate＋新 KEY  
 - 建表時 scale 標籤 **snapshot** 進 `FieldDefinition.scaleValueLabels`；填表不 live join 名冊  

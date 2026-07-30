@@ -17,7 +17,17 @@
 
 ## Step 1 — 先把選項池準備好
 
-進**選項池**。
+進**標準選項**。
+
+### KEY 命名（Superuser）
+
+新建 Master 时 KEY 须遵守命名规范：
+
+- 分类前缀 + camelCase，例：`demo_chineseName`、`coun_contactPhone`
+- PO 白名单无前缀例外：目前仅 `school`
+- 不要用裸 KEY：`name`、`phone`、`email`（语义过广）
+
+**KEY** 是系统 identifier；**清单名称 / 字段 LABEL** 是你自由设计的中文。**前缀只是命名惯例；是否「标准问题」请到标准问题另行登记。**
 
 ### 表格分類與動作
 
