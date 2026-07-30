@@ -587,8 +587,8 @@ function FormBuilder() {
   const needsSeed = moduleItems.length === 0 || actionItems.length === 0
 
   return (
-    <div className="flex min-h-[calc(100vh-4rem)] flex-col">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Link href="/forms" className="btn-ghost btn-sm">
             ← 回表格清單
@@ -629,10 +629,18 @@ function FormBuilder() {
         </div>
       </div>
 
-      {error && <ErrorBanner message={error} />}
-      {legacyWarning && <ErrorBanner message={legacyWarning} />}
+      {error && (
+        <div className="mb-3 shrink-0">
+          <ErrorBanner message={error} />
+        </div>
+      )}
+      {legacyWarning && (
+        <div className="mb-3 shrink-0">
+          <ErrorBanner message={legacyWarning} />
+        </div>
+      )}
       {needsSeed && (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="mb-3 shrink-0 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           分類或動作標準選項還是空的，請先到
           <Link href="/options" className="mx-1 font-medium underline">
             標準選項
