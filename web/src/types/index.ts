@@ -111,6 +111,8 @@ export interface Template {
   /** 填報 ACL：預設全組織；groups 時需屬於 fillGroups */
   fillAccessType?: FillAccessType
   fillGroups?: string[]
+  /** 每筆提交必須有名稱（自動插入 locked KEY=title 第一題） */
+  requiresSubmissionTitle?: boolean
 }
 
 // ---------- UserRole (權限管理) ----------

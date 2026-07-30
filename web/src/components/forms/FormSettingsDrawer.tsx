@@ -8,6 +8,7 @@ interface FormSettingsDrawerProps {
   moduleId: string
   actionId: string
   enabled: boolean
+  requiresSubmissionTitle: boolean
   fillAccessType: FillAccessType
   fillGroups: string[]
   managerGroups: string[]
@@ -17,6 +18,7 @@ interface FormSettingsDrawerProps {
   onModuleId: (v: string) => void
   onActionId: (v: string) => void
   onEnabled: (v: boolean) => void
+  onRequiresSubmissionTitle: (v: boolean) => void
   onFillAccessType: (v: FillAccessType) => void
   onFillGroups: (v: string[]) => void
   onManagerGroups: (v: string[]) => void
@@ -28,6 +30,7 @@ export function FormSettingsDrawer({
   moduleId,
   actionId,
   enabled,
+  requiresSubmissionTitle,
   fillAccessType,
   fillGroups,
   managerGroups,
@@ -37,6 +40,7 @@ export function FormSettingsDrawer({
   onModuleId,
   onActionId,
   onEnabled,
+  onRequiresSubmissionTitle,
   onFillAccessType,
   onFillGroups,
   onManagerGroups,
@@ -92,6 +96,20 @@ export function FormSettingsDrawer({
                 onChange={e => onEnabled(e.target.checked)}
               />
               啟用（出現在填報中心）
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                className="mt-0.5 rounded text-unicorn-600 focus:ring-unicorn-500"
+                checked={requiresSubmissionTitle}
+                onChange={e => onRequiresSubmissionTitle(e.target.checked)}
+              />
+              <span>
+                每筆提交需要名稱（title）
+                <span className="mt-0.5 block text-xs font-normal text-slate-500">
+                  自動在第一題插入 KEY=title、必答、不可刪除。用於資料池辨識每筆紀錄。
+                </span>
+              </span>
             </label>
           </section>
 

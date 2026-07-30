@@ -22,9 +22,13 @@ import {
   buildQuestionPool,
   fieldFromPoolItem,
   isContractLockedField,
+  isSubmissionTitleField,
+  markSubmissionTitleFields,
   optionSetsForField,
   stripDraft,
+  syncFieldsWithSubmissionTitle,
   toDraftFields,
+  validateSubmissionTitleSetup,
   type DraftField,
   type QuestionPoolItem,
 } from '@/lib/formBuilder'
@@ -224,6 +228,7 @@ function FormBuilder() {
   const [managerGroups, setManagerGroups] = useState<string[]>([])
   const [fillAccessType, setFillAccessType] = useState<FillAccessType>('allOrgUsers')
   const [fillGroups, setFillGroups] = useState<string[]>([])
+  const [requiresSubmissionTitle, setRequiresSubmissionTitle] = useState(false)
   const [fields, setFields] = useState<DraftField[]>([])
   const [legacyWarning, setLegacyWarning] = useState('')
 
@@ -257,7 +262,9 @@ function FormBuilder() {
           setManagerGroups(template.managerGroups || [])
           setFillAccessType(template.fillAccessType || 'allOrgUsers')
           setFillGroups(template.fillGroups || [])
-          setFields(toDraftFields(template.fields))
+          const requiresTitle = !!template.requiresSubmissionTitle
+          setRequiresSubmissionTitle(requiresTitle)
+          setFields(markSubmissionTitleFields(toDraftFields(template.fields), requiresTitle))
           const legacy = findLegacyDateKeyUsage([template])
           if (legacy.length > 0) {
             setLegacyWarning(
@@ -316,6 +323,14 @@ function FormBuilder() {
     setFields(prev =>
       prev.map((field, i) => {
         if (i !== index) return field
+
+        if (isSubmissionTitleField(field)) {
+          const allowed: Partial<DraftField> = {}
+          if (patch.label !== undefined) allowed.label = patch.label
+          if (patch.helpText !== undefined) allowed.helpText = patch.helpText
+          return { ...field, ...allowed }
+        }
+
         const locked = isContractLockedField(field, standardKeys)
 
         if (locked && patch.key === undefined) {
@@ -421,6 +436,7 @@ function FormBuilder() {
 
   const removeField = (index: number) => {
     setFields(prev => {
+      if (isSubmissionTitleField(prev[index])) return prev
       const removed = prev[index]
       if (removed && expandedId === removed.clientId) setExpandedId(null)
       return prev.filter((_, i) => i !== index).map((f, i) => ({ ...f, order: i }))
@@ -430,11 +446,20 @@ function FormBuilder() {
   const moveField = (index: number, target: number) => {
     if (target < 0 || target >= fields.length) return
     setFields(prev => {
+      if (isSubmissionTitleField(prev[index])) return prev
+      let to = target
+      if (requiresSubmissionTitle && to === 0) to = 1
       const next = [...prev]
       const [item] = next.splice(index, 1)
-      next.splice(target, 0, item)
+      next.splice(to, 0, item)
       return next.map((f, i) => ({ ...f, order: i }))
     })
+  }
+
+  const handleRequiresSubmissionTitle = (next: boolean) => {
+    setRequiresSubmissionTitle(next)
+    setFields(prev => syncFieldsWithSubmissionTitle(prev, next))
+    if (next) setExpandedId(null)
   }
 
   const addFromPool = (item: QuestionPoolItem) => {
@@ -474,6 +499,8 @@ function FormBuilder() {
     if (!moduleId) list.push('請選分類（module）')
     if (!actionId) list.push('請選動作（action）')
     if (fields.length === 0) list.push('至少要有一個問題')
+    const titleErr = validateSubmissionTitleSetup(stripDraft(fields), requiresSubmissionTitle)
+    if (titleErr) list.push(titleErr)
     if (fields.some(f => !f.key.trim() || f.needsKey)) {
       list.push('每個問題都要有有效的系統 KEY（碰撞後請設定新 KEY）')
     }
@@ -536,7 +563,7 @@ function FormBuilder() {
       }
     }
     return list
-  }, [name, moduleId, actionId, fields, fillAccessType, fillGroups, optionSets, standardByKey])
+  }, [name, moduleId, actionId, fields, fillAccessType, fillGroups, requiresSubmissionTitle, optionSets, standardByKey])
 
   const warnings = useMemo(() => {
     const list: string[] = []
@@ -567,10 +594,13 @@ function FormBuilder() {
         managerGroups,
         fillAccessType,
         fillGroups,
+        requiresSubmissionTitle,
         fields: stripDraft(fields),
       }
       if (editId && source) {
-        const fieldsChanged = JSON.stringify(source.fields) !== JSON.stringify(payload.fields)
+        const fieldsChanged =
+          JSON.stringify(source.fields) !== JSON.stringify(payload.fields) ||
+          !!source.requiresSubmissionTitle !== requiresSubmissionTitle
         await updateTemplate(editId, payload, source.version, fieldsChanged)
       } else {
         await createTemplate(payload, email)
@@ -687,15 +717,18 @@ function FormBuilder() {
             {fields.map((field, index) => {
               const expanded = expandedId === field.clientId
               const zebra = index % 2 === 0 ? 'bg-slate-50' : 'bg-white'
-              const locked = isContractLockedField(field, standardKeys)
+              const submissionTitle = isSubmissionTitleField(field)
+              const locked = submissionTitle || isContractLockedField(field, standardKeys)
               const relevantSets = optionSetsForField(field, optionSets)
-              const boundStandard = standardByKey.get(field.key)
+              const boundStandard = submissionTitle ? undefined : standardByKey.get(field.key)
 
               return (
                 <div
                   key={field.clientId}
-                  className={`rounded-lg border border-slate-200 ${zebra}`}
-                  draggable={!expanded}
+                  className={`rounded-lg border border-slate-200 ${zebra} ${
+                    submissionTitle ? 'ring-1 ring-unicorn-100' : ''
+                  }`}
+                  draggable={!expanded && !submissionTitle}
                   onDragStart={() => setDragIndex(index)}
                   onDragOver={e => e.preventDefault()}
                   onDrop={() => {
@@ -738,8 +771,11 @@ function FormBuilder() {
                         <span className="ml-2 text-xs text-slate-400">
                           · {answerFormatLabel(field)}
                         </span>
-                        {locked && (
+                        {locked && !submissionTitle && (
                           <span className="ml-2 text-xs text-unicorn-600">標準契約</span>
+                        )}
+                        {submissionTitle && (
+                          <span className="ml-2 text-xs text-unicorn-600">資料項目名稱 🔒</span>
                         )}
                         {field.needsKey && (
                           <span className="ml-2 text-xs text-amber-700">需新 KEY</span>
@@ -750,7 +786,7 @@ function FormBuilder() {
                       type="button"
                       className="btn-ghost btn-sm"
                       aria-label="上移"
-                      disabled={index === 0}
+                      disabled={index === 0 || (requiresSubmissionTitle && index === 1)}
                       onClick={() => moveField(index, index - 1)}
                     >
                       <ArrowUp className="h-3.5 w-3.5" />
@@ -764,45 +800,56 @@ function FormBuilder() {
                     >
                       <ArrowDown className="h-3.5 w-3.5" />
                     </button>
-                    <button
-                      type="button"
-                      className="btn-ghost btn-sm text-red-500"
-                      aria-label="刪除"
-                      onClick={() => removeField(index)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    {!submissionTitle && (
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm text-red-500"
+                        aria-label="刪除"
+                        onClick={() => removeField(index)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
 
                   {expanded && (
                     <div className="space-y-3 border-t border-slate-200 px-4 py-4">
-                      <div className="flex flex-wrap gap-2 text-xs">
-                        <button
-                          type="button"
-                          className="btn-ghost btn-sm"
-                          onClick={() => moveField(index, 0)}
-                          disabled={index === 0}
-                        >
-                          移至最上
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost btn-sm"
-                          onClick={() => moveField(index, fields.length - 1)}
-                          disabled={index === fields.length - 1}
-                        >
-                          移至最下
-                        </button>
-                      </div>
+                      {submissionTitle && (
+                        <p className="rounded-lg border border-unicorn-100 bg-unicorn-50 px-3 py-2 text-xs text-unicorn-900">
+                          系統欄位：每筆提交的名稱（KEY=title、必答）。可在表單設定關閉此功能。
+                        </p>
+                      )}
+                      {!submissionTitle && (
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            onClick={() => moveField(index, requiresSubmissionTitle ? 1 : 0)}
+                            disabled={index === 0 || (requiresSubmissionTitle && index === 1)}
+                          >
+                            移至最上
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            onClick={() => moveField(index, fields.length - 1)}
+                            disabled={index === fields.length - 1}
+                          >
+                            移至最下
+                          </button>
+                        </div>
+                      )}
 
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div>
-                          <label className="label mb-1 text-xs">問題</label>
+                          <label className="label mb-1 text-xs">
+                            {submissionTitle ? '資料項目名稱（顯示）' : '問題'}
+                          </label>
                           <input
                             className="field"
                             value={field.label}
                             onChange={e => updateField(index, { label: e.target.value })}
-                            placeholder="問題顯示名稱"
+                            placeholder={submissionTitle ? '例：申請案名稱' : '問題顯示名稱'}
                           />
                         </div>
                         <div>
@@ -811,6 +858,8 @@ function FormBuilder() {
                             ref={field.needsKey ? keyInputRef : undefined}
                             className="field font-mono"
                             value={field.key}
+                            disabled={submissionTitle}
+                            readOnly={submissionTitle}
                             onChange={e =>
                               updateField(index, {
                                 key: e.target.value.trim(),
@@ -838,12 +887,18 @@ function FormBuilder() {
 
                       <div>
                         <label className="label mb-1 text-xs">回答方式</label>
-                        {locked ? (
+                        {locked || submissionTitle ? (
                           <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                             {answerFormatLabel(field)} 🔒
-                            {(field.type === 'date' ||
-                              field.type === 'time' ||
-                              field.type === 'datetime') && (
+                            {submissionTitle && (
+                              <span className="mt-1 block text-xs text-slate-500">
+                                提交識別欄位，固定短文字。
+                              </span>
+                            )}
+                            {!submissionTitle &&
+                              (field.type === 'date' ||
+                                field.type === 'time' ||
+                                field.type === 'datetime') && (
                               <span className="mt-1 block text-xs text-slate-500">
                                 這是回答方式，不是 KEY（例如 startDate 才是系統 KEY）。
                               </span>
@@ -995,12 +1050,16 @@ function FormBuilder() {
                           type="checkbox"
                           className="rounded text-unicorn-600 focus:ring-unicorn-500"
                           checked={field.required}
+                          disabled={submissionTitle}
                           onChange={e => updateField(index, { required: e.target.checked })}
                         />
                         必答
+                        {submissionTitle && (
+                          <span className="text-xs text-slate-400">（系統鎖定）</span>
+                        )}
                       </label>
 
-                      {canPresetFieldType(field.type) && (
+                      {canPresetFieldType(field.type) && !submissionTitle && (
                         <div className="rounded-lg border border-slate-200 bg-white p-3">
                           <label className="label mb-2 text-xs">輸入方式</label>
                           <div className="flex flex-wrap gap-4">
@@ -1153,6 +1212,7 @@ function FormBuilder() {
         moduleId={moduleId}
         actionId={actionId}
         enabled={enabled}
+        requiresSubmissionTitle={requiresSubmissionTitle}
         fillAccessType={fillAccessType}
         fillGroups={fillGroups}
         managerGroups={managerGroups}
@@ -1162,6 +1222,7 @@ function FormBuilder() {
         onModuleId={setModuleId}
         onActionId={setActionId}
         onEnabled={setEnabled}
+        onRequiresSubmissionTitle={handleRequiresSubmissionTitle}
         onFillAccessType={setFillAccessType}
         onFillGroups={setFillGroups}
         onManagerGroups={setManagerGroups}

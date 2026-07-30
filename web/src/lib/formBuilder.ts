@@ -33,24 +33,20 @@ export interface QuestionPoolItem {
   scaleValueLabels?: FieldDefinition['scaleValueLabels']
 }
 
-/** 常用題庫順序：title 永遠第一（主識別） */
-export const FREQUENT_KEY_ORDER = [
-  'title',
-  'school',
-  'startDate',
-  'endDate',
-  'expiryDate',
-] as const
+/** 常用題庫順序（title 改由表單設定注入，不在題庫） */
+export const FREQUENT_KEY_ORDER = ['school', 'startDate', 'endDate', 'expiryDate'] as const
+
+export const SUBMISSION_TITLE_KEY = 'title'
 
 const FREQUENT_KEYS = new Set<string>(FREQUENT_KEY_ORDER)
 
 /**
- * Numbered FIXED_KEY slots, rating*, and upload* are answer-manner placeholders,
- * not reusable semantic templates — omit from UNICORN 題庫 (use ＋ menu / 標準問題).
- * title is kept: system-wide submission identifier.
+ * Numbered FIXED_KEY slots, rating*, upload*, and title are omitted from the pool.
+ * title is injected via Template.requiresSubmissionTitle (submission identity).
  */
 const POOL_EXCLUDED_KEYS = new Set<string>([
   ...RATING_KEYS,
+  SUBMISSION_TITLE_KEY,
   'text1',
   'text2',
   'text3',
@@ -184,6 +180,89 @@ export interface DraftField extends FieldDefinition {
   /** Lock type / optionSet / scale / yesNo after template insert */
   contractLocked?: boolean
   templateDefaultKey?: string
+  /** System submission-identity field (KEY locked = title) */
+  submissionTitle?: boolean
+}
+
+export function isSubmissionTitleField(
+  field: Pick<DraftField, 'key' | 'submissionTitle'>
+): boolean {
+  return field.submissionTitle === true
+}
+
+export function createSubmissionTitleDraft(): DraftField {
+  return {
+    clientId: newClientId(),
+    key: SUBMISSION_TITLE_KEY,
+    type: 'text',
+    label: FIXED_KEYS[SUBMISSION_TITLE_KEY]?.label || '標題',
+    required: true,
+    order: 0,
+    submissionTitle: true,
+    contractLocked: true,
+  }
+}
+
+/** Ensure requiresSubmissionTitle toggles match fields[0] = locked title. */
+export function syncFieldsWithSubmissionTitle(
+  fields: DraftField[],
+  requires: boolean
+): DraftField[] {
+  if (!requires) {
+    return fields
+      .filter(f => !f.submissionTitle)
+      .map((f, i) => ({ ...f, order: i }))
+  }
+
+  const rest = fields.filter(f => !f.submissionTitle)
+  const adopt = rest.find(f => f.key === SUBMISSION_TITLE_KEY)
+  const others = adopt ? rest.filter(f => f.clientId !== adopt.clientId) : rest
+
+  const titleField: DraftField = adopt
+    ? {
+        ...adopt,
+        key: SUBMISSION_TITLE_KEY,
+        type: 'text',
+        required: true,
+        submissionTitle: true,
+        contractLocked: true,
+        label: adopt.label.trim() || FIXED_KEYS[SUBMISSION_TITLE_KEY]?.label || '標題',
+        optionSetId: undefined,
+        multiple: undefined,
+        scalePoints: undefined,
+        scaleValueLabels: undefined,
+        yesNoAllowNa: undefined,
+      }
+    : createSubmissionTitleDraft()
+
+  return [titleField, ...others].map((f, i) => ({ ...f, order: i }))
+}
+
+export function markSubmissionTitleFields(
+  fields: DraftField[],
+  requires: boolean
+): DraftField[] {
+  if (!requires) {
+    return fields.map(f => ({ ...f, submissionTitle: undefined }))
+  }
+  return syncFieldsWithSubmissionTitle(fields, true)
+}
+
+export function validateSubmissionTitleSetup(
+  fields: FieldDefinition[],
+  requires: boolean
+): string | null {
+  if (!requires) return null
+  if (fields.length === 0) return '啟用「每筆提交需要名稱」時至少要有一個問題'
+  const first = fields[0]
+  if (first.key !== SUBMISSION_TITLE_KEY) {
+    return '「每筆提交需要名稱」時，第一題必須是 KEY=title'
+  }
+  if (first.type !== 'text') return '資料項目名稱（title）必須是短文字'
+  if (!first.required) return '資料項目名稱（title）必須設為必答'
+  const dup = fields.filter(f => f.key === SUBMISSION_TITLE_KEY)
+  if (dup.length > 1) return 'KEY「title」只能出現一次（資料項目名稱）'
+  return null
 }
 
 export function newClientId(): string {
@@ -206,6 +285,7 @@ export function stripDraft(fields: DraftField[]): FieldDefinition[] {
       needsKey: _n,
       contractLocked: _l,
       templateDefaultKey: _t,
+      submissionTitle: _s,
       ...rest
     } = f
     return { ...rest, order: i }
