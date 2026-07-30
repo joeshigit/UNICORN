@@ -33,15 +33,24 @@ export interface QuestionPoolItem {
   scaleValueLabels?: FieldDefinition['scaleValueLabels']
 }
 
-const FREQUENT_KEYS = new Set(['school', 'startDate', 'endDate', 'expiryDate', 'upload'])
+/** 常用題庫順序：title 永遠第一（主識別） */
+export const FREQUENT_KEY_ORDER = [
+  'title',
+  'school',
+  'startDate',
+  'endDate',
+  'expiryDate',
+] as const
+
+const FREQUENT_KEYS = new Set<string>(FREQUENT_KEY_ORDER)
 
 /**
- * Numbered FIXED_KEY slots and rating* keys are answer-manner placeholders,
+ * Numbered FIXED_KEY slots, rating*, and upload* are answer-manner placeholders,
  * not reusable semantic templates — omit from UNICORN 題庫 (use ＋ menu / 標準問題).
+ * title is kept: system-wide submission identifier.
  */
 const POOL_EXCLUDED_KEYS = new Set<string>([
   ...RATING_KEYS,
-  'title',
   'text1',
   'text2',
   'text3',
@@ -57,6 +66,7 @@ const POOL_EXCLUDED_KEYS = new Set<string>([
   'amount1',
   'amount2',
   'amount3',
+  'upload',
   'upload2',
   'upload3',
   'upload4',
@@ -141,6 +151,19 @@ export function buildQuestionPool(
       optionSetId: os.id,
     })
   }
+
+  const groupRank = (id: PoolGroupId) => POOL_GROUP_ORDER.findIndex(g => g.id === id)
+  const frequentRank = (key: string) => {
+    const i = FREQUENT_KEY_ORDER.indexOf(key as (typeof FREQUENT_KEY_ORDER)[number])
+    return i >= 0 ? i : 999
+  }
+
+  items.sort((a, b) => {
+    const byGroup = groupRank(a.groupId) - groupRank(b.groupId)
+    if (byGroup !== 0) return byGroup
+    if (a.groupId === 'frequent') return frequentRank(a.defaultKey) - frequentRank(b.defaultKey)
+    return a.label.localeCompare(b.label, 'zh-Hant')
+  })
 
   return items
 }

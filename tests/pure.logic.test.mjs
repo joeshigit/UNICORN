@@ -1204,7 +1204,6 @@ describe('Universal KEY naming L2 policy (mirrors keys.ts)', () => {
 // Mirrors formBuilder.ts isExcludedFromQuestionPool
 const POOL_EXCLUDED_KEYS = new Set([
   ...Array.from({ length: 20 }, (_, i) => `rating${i + 1}`),
-  'title',
   'text1',
   'text2',
   'text3',
@@ -1220,6 +1219,7 @@ const POOL_EXCLUDED_KEYS = new Set([
   'amount1',
   'amount2',
   'amount3',
+  'upload',
   'upload2',
   'upload3',
   'upload4',
@@ -1239,9 +1239,14 @@ describe('UNICORN 題庫 pool exclusions', () => {
   })
 
   it('keeps semantic fixed keys and meaningful standard keys', () => {
+    assert.equal(isExcludedFromQuestionPool('title'), false)
     assert.equal(isExcludedFromQuestionPool('startDate'), false)
     assert.equal(isExcludedFromQuestionPool('documentDate'), false)
-    assert.equal(isExcludedFromQuestionPool('upload'), false)
     assert.equal(isExcludedFromQuestionPool('score_projectExecution'), false)
+  })
+
+  it('excludes all upload slots (file is an answer manner)', () => {
+    assert.equal(isExcludedFromQuestionPool('upload'), true)
+    assert.equal(isExcludedFromQuestionPool('upload3'), true)
   })
 })
