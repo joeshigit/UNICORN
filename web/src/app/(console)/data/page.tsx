@@ -443,7 +443,7 @@ function DataPool() {
   return (
     <>
       <PageHeader
-        title="資料池"
+        title="已填的表格"
         description="預設瀏覽近期資料；需要完整月份範圍時再開進階搜尋。作廢預設隱藏，精修只作用在已載入的資料。"
         actions={
           <>

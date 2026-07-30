@@ -21,10 +21,10 @@ import { Spinner } from '@/components/ui'
 
 const NAV = [
   { href: '/fill', label: '填報', icon: ClipboardList, desc: '選一張表格填寫', adminOnly: false },
-  { href: '/data', label: '資料池', icon: Database, desc: '查詢與匯出所有提交', adminOnly: false },
+  { href: '/data', label: '已填的表格', icon: Database, desc: '查詢與匯出所有提交', adminOnly: false },
   { href: '/forms', label: '表格', icon: LayoutGrid, desc: '建立與管理表格', adminOnly: true },
-  { href: '/standards', label: '標準資料', icon: BookMarked, desc: '組織標準 KEY 與答案契約', adminOnly: true },
-  { href: '/options', label: '選項池', icon: ListTree, desc: '管理 KEY 與標準值', adminOnly: true },
+  { href: '/standards', label: '標準問題', icon: BookMarked, desc: '組織標準 KEY 與答案契約', adminOnly: true },
+  { href: '/options', label: '標準選項', icon: ListTree, desc: '管理 KEY 與標準值', adminOnly: true },
   { href: '/users', label: '權限', icon: Users, desc: '設定各群組管理員', adminOnly: true },
 ]
 

@@ -187,7 +187,7 @@ export function expectedValueModel(type: FieldType): StandardValueModel | null {
 
 export function validateTypeValueModel(type: FieldType, valueModel: StandardValueModel): string | null {
   const expected = expectedValueModel(type)
-  if (!expected) return `標準資料不支援題型「${type}」`
+  if (!expected) return `標準問題不支援題型「${type}」`
   if (valueModel !== expected) return `題型「${type}」的答案模型必須是 ${expected}`
   return null
 }
@@ -197,7 +197,7 @@ export function validateStandardKeyCode(code: string): string | null {
   const base = validateOptionSetCode(code)
   if (base) return base
   if ((RESERVED_CODES as readonly string[]).includes(code)) {
-    return `「${code}」是系統保留 KEY，不能當作標準資料`
+    return `「${code}」是系統保留 KEY，不能當作標準問題`
   }
   return null
 }
@@ -242,7 +242,7 @@ export function assertFieldMatchesStandard(
 ): string | null {
   if (field.key !== standard.key) return `欄位 KEY 與標準「${standard.key}」不一致`
   if (field.type !== standard.type) {
-    return `「${standard.key}」的題型由標準資料鎖定為 ${standard.type}`
+    return `「${standard.key}」的題型由標準問題鎖定為 ${standard.type}`
   }
   const vmErr = validateTypeValueModel(standard.type, standard.valueModel)
   if (vmErr) return vmErr
@@ -250,25 +250,25 @@ export function assertFieldMatchesStandard(
   if (standard.valueModel === 'optionSet') {
     if (!field.optionSetId) return `「${standard.key}」要選一個選項清單`
     if (optionSetCode != null && optionSetCode !== field.key) {
-      return `「${standard.key}」只能使用 code 相同的選項池（含子集）`
+      return `「${standard.key}」只能使用 code 相同的標準選項（含子集）`
     }
     return null
   }
 
   if (standard.valueModel === 'scale') {
     if (!isValidScalePoints(standard.scalePoints) || field.scalePoints !== standard.scalePoints) {
-      return `「${standard.key}」的刻度點數由標準資料鎖定`
+      return `「${standard.key}」的刻度點數由標準問題鎖定`
     }
     const labelErr = validateScaleValueLabels(field.scalePoints, field.scaleValueLabels)
     if (labelErr) return `「${standard.key}」：${labelErr}`
     if (!scaleValueLabelsEqual(field.scaleValueLabels, standard.scaleValueLabels)) {
-      return `「${standard.key}」的量表標籤由標準資料鎖定，不能改成系統預設或其他文案`
+      return `「${standard.key}」的量表標籤由標準問題鎖定，不能改成系統預設或其他文案`
     }
     return null
   }
 
   // free
-  if (field.optionSetId) return `「${standard.key}」是自由填寫，不應綁選項池`
+  if (field.optionSetId) return `「${standard.key}」是自由填寫，不應綁標準選項`
   if (field.scaleValueLabels?.length) return `「${standard.key}」不是量表，不應有量表標籤`
   return null
 }

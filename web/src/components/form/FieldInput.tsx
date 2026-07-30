@@ -115,7 +115,7 @@ export function FieldInput({
                   : 'border-slate-300 bg-white'
             }`}
           >
-            {active.length === 0 && <p className="hint px-1 py-2">這個選項池還沒有選項</p>}
+            {active.length === 0 && <p className="hint px-1 py-2">這個標準選項還沒有選項</p>}
             {active.map(option => (
               <label
                 key={option.value}
@@ -155,7 +155,7 @@ export function FieldInput({
                   : 'border-slate-300 bg-white'
             }`}
           >
-            {active.length === 0 && <p className="hint px-1 py-2">這個選項池還沒有選項</p>}
+            {active.length === 0 && <p className="hint px-1 py-2">這個標準選項還沒有選項</p>}
             {active.map(option => (
               <label
                 key={option.value}
@@ -251,7 +251,7 @@ export function FieldInput({
                   : 'border-slate-300 bg-white'
             }`}
           >
-            {active.length === 0 && <p className="hint px-1 py-2">這個選項池還沒有選項</p>}
+            {active.length === 0 && <p className="hint px-1 py-2">這個標準選項還沒有選項</p>}
             {active.map(option => (
               <label
                 key={option.value}

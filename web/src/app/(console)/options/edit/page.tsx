@@ -56,7 +56,7 @@ function OptionSetEditor() {
           setName(`${found.name} — 子集`)
         } else if (setId) {
           const found = await getOptionSet(setId)
-          if (!found) throw new Error('找不到選項池')
+          if (!found) throw new Error('找不到標準選項')
           setOptionSet(found)
           setName(found.name)
           setDescription(found.description || '')
@@ -66,7 +66,7 @@ function OptionSetEditor() {
             if (found.masterSetId) setMaster(await getOptionSet(found.masterSetId))
           }
         } else {
-          throw new Error('沒有指定選項池')
+          throw new Error('沒有指定標準選項')
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : '載入失敗')
@@ -146,15 +146,15 @@ function OptionSetEditor() {
     <>
       <Link href="/options" className="btn-ghost btn-sm mb-4 -ml-3">
         <ArrowLeft className="h-4 w-4" />
-        回選項池
+        回標準選項
       </Link>
 
       <PageHeader
         title={subsetOf ? '建立子集' : isSubsetMode ? '編輯子集' : '編輯選項'}
         description={
           isSubsetMode
-            ? '子集只能從完整清單裡挑，所以不管用哪個子集填報，存進資料池的值都是同一套。'
-            : '值（value）是存進資料池的標準碼，建立後不要改；要換稱呼改顯示名稱就好。'
+            ? '子集只能從完整清單裡挑，所以不管用哪個子集填報，存進已填的表格的值都是同一套。'
+            : '值（value）是存進已填的表格的標準碼，建立後不要改；要換稱呼改顯示名稱就好。'
         }
       />
 
@@ -239,7 +239,7 @@ function OptionSetEditor() {
               {items.length > 0 && (
                 <div className="space-y-2">
                   <div className="hidden gap-2 px-1 text-xs text-slate-400 sm:grid sm:grid-cols-[1fr_1fr_auto_auto]">
-                    <span>值 value（存進資料池）</span>
+                    <span>值 value（存進已填的表格）</span>
                     <span>顯示名稱 label</span>
                     <span>狀態</span>
                     <span />

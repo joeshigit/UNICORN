@@ -124,7 +124,7 @@ function StandardsPageInner() {
           email
         )
       } else if (mode === 'optionSet') {
-        if (!selectedMaster) throw new Error('請選擇 Master 選項池')
+        if (!selectedMaster) throw new Error('請選擇 Master 標準選項')
         if (takenKeys.has(selectedMaster.code)) {
           throw new Error(`標準 KEY「${selectedMaster.code}」已經存在`)
         }
@@ -203,8 +203,8 @@ function StandardsPageInner() {
   return (
     <>
       <PageHeader
-        title="標準資料"
-        description="標準資料是組織認定可跨表重用的資料概念。它規定 KEY 及答案格式；一次性問題仍可在表單中使用本表專用欄位。"
+        title="標準問題"
+        description="標準問題是組織認定可跨表重用的資料概念。它規定 KEY 及答案格式；一次性問題仍可在表單中使用本表專用欄位。"
         actions={
           <button
             className="btn-primary"
@@ -237,7 +237,7 @@ function StandardsPageInner() {
               }}
             >
               <option value="free">自由填寫（文字／數字／日期…）</option>
-              <option value="optionSet">選項池（KEY＝Master code）</option>
+              <option value="optionSet">標準選項（KEY＝Master code）</option>
               <option value="scale">量表（固定 1…N 標籤）</option>
             </select>
           </div>
@@ -254,7 +254,7 @@ function StandardsPageInner() {
                 />
                 {freeKeyError && <p className="mt-1 text-sm text-red-600">{freeKeyError}</p>}
                 {!freeKeyError && takenKeys.has(freeKey) && (
-                  <p className="mt-1 text-sm text-red-600">這個 KEY 已經在標準資料中</p>
+                  <p className="mt-1 text-sm text-red-600">這個 KEY 已經在標準問題中</p>
                 )}
               </div>
               <div>
@@ -278,7 +278,7 @@ function StandardsPageInner() {
           {mode === 'optionSet' && (
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="label mb-1">Master 選項池（KEY＝其 code）</label>
+                <label className="label mb-1">Master 標準選項（KEY＝其 code）</label>
                 <select
                   className="field font-mono"
                   value={masterId}
@@ -408,7 +408,7 @@ function StandardsPageInner() {
       {loading ? (
         <Spinner label="載入中" />
       ) : rows.length === 0 ? (
-        <EmptyState title="還沒有標準資料" description="先新增幾個跨表會重用的 KEY。" />
+        <EmptyState title="還沒有標準問題" description="先新增幾個跨表會重用的 KEY。" />
       ) : (
         <div className="space-y-4">
           {rows.map(row => (

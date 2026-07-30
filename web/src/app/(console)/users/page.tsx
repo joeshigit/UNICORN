@@ -101,7 +101,7 @@ function UsersPageInner() {
           <label className="label mb-2">指派群組</label>
           {managerGroupItems.length === 0 ? (
             <div className="text-sm text-amber-700 bg-amber-50 rounded-lg p-3 border border-amber-200">
-              尚未建立 <code className="font-mono">{MANAGER_GROUP_CODE}</code> 選項池。請先到「選項池」建立並新增群組名稱。
+              尚未建立 <code className="font-mono">{MANAGER_GROUP_CODE}</code> 標準選項。請先到「標準選項」建立並新增群組名稱。
             </div>
           ) : (
             <div className="flex flex-wrap gap-4">

@@ -75,7 +75,7 @@ function PresetValueInput({
       const selected = Array.isArray(field.presetValue) ? field.presetValue : []
       return (
         <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-300 p-2">
-          {active.length === 0 && <p className="hint px-1 py-1">這個選項池還沒有選項</p>}
+          {active.length === 0 && <p className="hint px-1 py-1">這個標準選項還沒有選項</p>}
           {active.map(option => (
             <label key={option.value} className="flex cursor-pointer items-center gap-2 text-sm">
               <input
@@ -396,7 +396,7 @@ function FormBuilder() {
     if (fields.some(f => !f.key)) list.push('每個欄位都要選 KEY')
     if (fields.some(f => !f.label.trim())) list.push('每個欄位都要有顯示名稱')
     if (fields.some(f => usesOptionSet(f.type) && !f.optionSetId)) {
-      list.push('下拉／選擇題欄位要選一個選項池')
+      list.push('下拉／選擇題欄位要選一個標準選項')
     }
     if (fields.some(f => f.type === 'scale' && !isValidScalePoints(f.scalePoints))) {
       list.push('量表欄位要選刻度點數（3／4／5／10／100）')
@@ -415,7 +415,7 @@ function FormBuilder() {
       if (usesOptionSet(field.type) && field.optionSetId) {
         const set = optionSets.find(os => os.id === field.optionSetId)
         if (set && set.code !== field.key) {
-          list.push(`「${field.label || field.key}」的選項池 code 必須等於 KEY`)
+          list.push(`「${field.label || field.key}」的標準選項 code 必須等於 KEY`)
         }
       }
 
@@ -520,9 +520,9 @@ function FormBuilder() {
 
       {needsSeed && (
         <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          分類（module）或動作（action）選項池還是空的，先去
+          分類（module）或動作（action）標準選項還是空的，先去
           <Link href="/options" className="mx-1 font-medium underline">
-            選項池
+            標準選項
           </Link>
           補上選項。
         </div>
@@ -618,7 +618,7 @@ function FormBuilder() {
             {fillAccessType === 'groups' && (
               <div className="mt-3 flex flex-wrap gap-4">
                 {managerGroupItems.length === 0 ? (
-                  <div className="text-sm text-amber-700">請先建立 managerGroup 選項池。</div>
+                  <div className="text-sm text-amber-700">請先建立 managerGroup 標準選項。</div>
                 ) : (
                   managerGroupItems.map(item => (
                     <label
@@ -654,7 +654,7 @@ function FormBuilder() {
             </label>
             {managerGroupItems.length === 0 ? (
               <div className="text-sm text-amber-700 bg-amber-50 rounded-lg p-3 border border-amber-200">
-                尚未建立 <code className="font-mono">{MANAGER_GROUP_CODE}</code> 選項池，無法設定群組管理員。
+                尚未建立 <code className="font-mono">{MANAGER_GROUP_CODE}</code> 標準選項，無法設定群組管理員。
               </div>
             ) : (
               <div className="flex flex-wrap gap-4">
@@ -736,7 +736,7 @@ function FormBuilder() {
                     欄位 {index + 1}
                     {boundStandard && (
                       <span className="ml-2 font-normal text-slate-500">
-                        · 標準資料
+                        · 標準問題
                         {boundStandard.status === 'deprecated' ? '（已停用，仍可編輯此表）' : ''}
                       </span>
                     )}
@@ -771,7 +771,7 @@ function FormBuilder() {
                       onChange={e => updateField(index, { key: e.target.value })}
                     >
                       <option value="">選一個 KEY…</option>
-                      <optgroup label="標準資料">
+                      <optgroup label="標準問題">
                         {pickerStandards.map(s => (
                           <option
                             key={s.id || s.key}
@@ -804,7 +804,7 @@ function FormBuilder() {
                             ))}
                         </optgroup>
                       ))}
-                      <optgroup label="選項池（本表／未升格）">
+                      <optgroup label="標準選項（本表／未升格）">
                         {optionSetKeys.map(choice => (
                           <option
                             key={choice.key}
@@ -847,7 +847,7 @@ function FormBuilder() {
                         <option value="dropdown">下拉選單</option>
                         <option value="choice">選擇題（圓鈕／方框）</option>
                       </select>
-                      {contractLocked && <p className="hint mt-1">由標準資料鎖定</p>}
+                      {contractLocked && <p className="hint mt-1">由標準問題鎖定</p>}
                     </div>
                     <div>
                       <label className="label mb-1 text-xs">用哪個選項清單</label>
@@ -897,7 +897,7 @@ function FormBuilder() {
                       </select>
                       <p className="hint mt-1">
                         {contractLocked
-                          ? `由標準資料鎖定：${resolveScaleValueLabels(field)
+                          ? `由標準問題鎖定：${resolveScaleValueLabels(field)
                               .map(l => `${l.value}=${l.label}`)
                               .join('／')}`
                           : SCALE_DIRECTION_HINT}
@@ -978,7 +978,7 @@ function FormBuilder() {
 
                 <p className="hint">
                   型別：{field.type}
-                  {field.key && `　·　存進資料池的欄位名稱：${field.key}`}
+                  {field.key && `　·　存進已填的表格的欄位名稱：${field.key}`}
                 </p>
               </div>
             )

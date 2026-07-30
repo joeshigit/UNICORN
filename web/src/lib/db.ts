@@ -297,12 +297,12 @@ function assertCreatableStandard(input: StandardKeyCreateInput): void {
   if (!input.meaning.trim()) throw new Error('請填意義說明')
 
   if (input.valueModel === 'optionSet') {
-    if (!input.optionSetId) throw new Error('請選擇選項池（Master）')
+    if (!input.optionSetId) throw new Error('請選擇標準選項（Master）')
   } else if (input.valueModel === 'scale') {
     const labelErr = validateScaleValueLabels(input.scalePoints, input.scaleValueLabels)
     if (labelErr) throw new Error(labelErr)
   } else if (input.optionSetId || input.scalePoints || input.scaleValueLabels?.length) {
-    throw new Error('自由填寫型標準資料不能帶選項池或量表契約')
+    throw new Error('自由填寫型標準問題不能帶標準選項或量表契約')
   }
 }
 
@@ -316,9 +316,9 @@ export async function createStandardKey(input: StandardKeyCreateInput, userEmail
 
   if (input.valueModel === 'optionSet' && input.optionSetId) {
     const set = await getOptionSet(input.optionSetId)
-    if (!set || !set.isMaster) throw new Error('選項池型標準必須綁定 Master')
+    if (!set || !set.isMaster) throw new Error('標準選項型標準必須綁定 Master')
     if (set.code !== input.key.trim()) {
-      throw new Error('MVP：標準 KEY 必須等於選項池 code')
+      throw new Error('MVP：標準 KEY 必須等於標準選項 code')
     }
   }
 
@@ -350,7 +350,7 @@ export async function createStandardKey(input: StandardKeyCreateInput, userEmail
 /** 僅允許改 meaning／defaultLabel／status；答案契約 immutable */
 export async function updateStandardKey(id: string, input: StandardKeyUpdateInput): Promise<void> {
   const current = await getStandardKey(id)
-  if (!current) throw new Error('找不到這筆標準資料')
+  if (!current) throw new Error('找不到這筆標準問題')
 
   const meaning = input.meaning !== undefined ? input.meaning.trim() : current.meaning
   const defaultLabel =

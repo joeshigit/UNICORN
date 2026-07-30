@@ -281,7 +281,7 @@ function SubmitForm() {
     <>
       <Link href={correctId ? '/data' : '/fill'} className="btn-ghost btn-sm mb-4 -ml-3">
         <ArrowLeft className="h-4 w-4" />
-        {correctId ? '回資料池' : '回填報中心'}
+        {correctId ? '回已填的表格' : '回填報中心'}
       </Link>
 
       <PageHeader

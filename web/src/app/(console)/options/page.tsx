@@ -103,8 +103,8 @@ function OptionsPageInner() {
   return (
     <>
       <PageHeader
-        title="選項池"
-        description="一個選項池 = 一個 KEY + 一份標準值清單。所有表格共用，資料才能跨表比較。"
+        title="標準選項"
+        description="一個標準選項 = 一個 KEY + 一份標準值清單。所有表格共用，資料才能跨表比較。"
         actions={
           <button className="btn-primary" onClick={() => setCreating(v => !v)}>
             <Plus className="h-4 w-4" />
@@ -160,7 +160,7 @@ function OptionsPageInner() {
       {loading ? (
         <Spinner label="載入中" />
       ) : groups.length === 0 ? (
-        <EmptyState title="還沒有任何選項池" />
+        <EmptyState title="還沒有任何標準選項" />
       ) : (
         <div className="space-y-4">
           {groups.map(group => (
