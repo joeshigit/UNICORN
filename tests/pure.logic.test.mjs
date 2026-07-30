@@ -703,3 +703,34 @@ describe('Browse merge trim', () => {
     )
   })
 })
+
+/** 鏡像 browseSubmissions 的 legExhausted／hasMore 語意 */
+function browseLegHasMore(legPageSizes, pageSize, prevExhausted = []) {
+  const nextExhausted = []
+  for (let i = 0; i < legPageSizes.length; i++) {
+    if (prevExhausted[i]) {
+      nextExhausted.push(true)
+      continue
+    }
+    nextExhausted.push(legPageSizes[i] < pageSize)
+  }
+  return { legExhausted: nextExhausted, hasMore: nextExhausted.some(e => !e) }
+}
+
+describe('Browse legExhausted', () => {
+  it('某腿不足一頁即標記耗盡，hasMore 只看未耗盡腿', () => {
+    const r = browseLegHasMore([50, 30], 50)
+    assert.deepEqual(r.legExhausted, [false, true])
+    assert.equal(r.hasMore, true)
+
+    const r2 = browseLegHasMore([30, 20], 50, r.legExhausted)
+    assert.deepEqual(r2.legExhausted, [true, true])
+    assert.equal(r2.hasMore, false)
+  })
+
+  it('已耗盡腿不再參與 hasMore', () => {
+    const r = browseLegHasMore([50, 10], 50, [false, true])
+    assert.deepEqual(r.legExhausted, [false, true])
+    assert.equal(r.hasMore, true)
+  })
+})

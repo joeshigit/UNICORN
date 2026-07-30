@@ -714,12 +714,15 @@ export interface BrowseQuery {
   managerScope?: ManagerBrowseScope
   /** 上一頁各隔離腿的 cursor；與 isolation sets 對齊 */
   setCursors?: Array<QueryDocumentSnapshot<DocumentData> | null>
+  /** 與 sets 對齊；true = 該腿已無更多，不再查詢 */
+  legExhausted?: boolean[]
 }
 
 export interface BrowseResult {
   rows: Submission[]
   hasMore: boolean
   setCursors: Array<QueryDocumentSnapshot<DocumentData> | null>
+  legExhausted: boolean[]
 }
 
 function mapDocs(docs: QueryDocumentSnapshot<DocumentData>[]): Submission[] {
@@ -919,12 +922,20 @@ export async function browseSubmissions(
   const cutoff = browseCutoffDate(q.days)
   const whereConstraints = browseWhereConstraints(!!q.includeSuperseded, cutoff)
   const prevCursors = q.setCursors || []
+  const prevExhausted = q.legExhausted || sets.map(() => false)
 
   const pages: QueryDocumentSnapshot<DocumentData>[][] = []
   const nextCursors: Array<QueryDocumentSnapshot<DocumentData> | null> = []
-  let anyFullPage = false
+  const nextLegExhausted: boolean[] = []
 
   for (let i = 0; i < sets.length; i++) {
+    if (prevExhausted[i]) {
+      pages.push([])
+      nextCursors.push(prevCursors[i] ?? null)
+      nextLegExhausted.push(true)
+      continue
+    }
+
     const extra = sets[i]
     const constraints: QueryConstraint[] = [
       ...extra,
@@ -937,11 +948,13 @@ export async function browseSubmissions(
 
     const snap = await getDocsFromServer(query(collection(db, 'submissions'), ...constraints))
     pages.push(snap.docs)
-    if (snap.docs.length === q.pageSize) {
-      anyFullPage = true
-      nextCursors.push(snap.docs[snap.docs.length - 1])
+
+    if (snap.docs.length < q.pageSize) {
+      nextCursors.push(snap.docs.length > 0 ? snap.docs[snap.docs.length - 1] : (cursor ?? null))
+      nextLegExhausted.push(true)
     } else {
-      nextCursors.push(null)
+      nextCursors.push(snap.docs[snap.docs.length - 1])
+      nextLegExhausted.push(false)
     }
   }
 
@@ -949,14 +962,12 @@ export async function browseSubmissions(
     const at = toDate(doc.data()._submittedAt)?.getTime() ?? 0
     return at
   })
-  // 若合併前總量超過 pageSize，下一頁仍可能有資料
-  const mergedTotal = new Set(pages.flat().map(d => d.id)).size
-  const hasMore = anyFullPage || mergedTotal > q.pageSize
 
   return {
     rows: sortBySubmittedAtDesc(mapDocs(merged)),
-    hasMore,
+    hasMore: nextLegExhausted.some(exhausted => !exhausted),
     setCursors: nextCursors,
+    legExhausted: nextLegExhausted,
   }
 }
 

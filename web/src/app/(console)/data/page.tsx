@@ -73,6 +73,7 @@ function DataPool() {
   const [templates, setTemplates] = useState<Template[]>([])
   const [optionSets, setOptionSets] = useState<OptionSet[]>([])
   const [isManager, setIsManager] = useState(false)
+  const [managerResolved, setManagerResolved] = useState(false)
 
   // 已載入的完整集合（含 VOID）
   const [loadedRows, setLoadedRows] = useState<Submission[]>([])
@@ -84,6 +85,7 @@ function DataPool() {
   const [selected, setSelected] = useState<Submission | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const setCursorsRef = useRef<Array<QueryDocumentSnapshot<DocumentData> | null>>([])
+  const legExhaustedRef = useRef<boolean[]>([])
 
   const [mode, setMode] = useState<DataMode>('browse')
   const [managerScope, setManagerScope] = useState<ManagerBrowseScope>('visible')
@@ -141,11 +143,19 @@ function DataPool() {
   useEffect(() => {
     if (!email || isSuperuser) {
       setIsManager(false)
+      setManagerResolved(true)
       return
     }
+    setManagerResolved(false)
     userIsManager(email)
-      .then(setIsManager)
-      .catch(() => setIsManager(false))
+      .then(v => {
+        setIsManager(v)
+        setManagerResolved(true)
+      })
+      .catch(() => {
+        setIsManager(false)
+        setManagerResolved(true)
+      })
   }, [email, isSuperuser])
 
   // Manager／Superuser 進入可見範圍時預設 14 天
@@ -162,6 +172,7 @@ function DataPool() {
       else {
         setLoading(true)
         setCursorsRef.current = []
+        legExhaustedRef.current = []
       }
       setError('')
       setBlocked(null)
@@ -172,14 +183,18 @@ function DataPool() {
             pageSize: effectivePageSize,
             managerScope: isSuperuser ? 'visible' : isManager ? managerScope : 'mine',
             setCursors: append ? setCursorsRef.current : undefined,
+            legExhausted: append ? legExhaustedRef.current : undefined,
           },
           actor,
           isSuperuser
         )
         setCursorsRef.current = result.setCursors
+        legExhaustedRef.current = result.legExhausted
         setHasMore(result.hasMore)
-        setMode('browse')
-        setAppliedAdvanced(null)
+        if (!append) {
+          setMode('browse')
+          setAppliedAdvanced(null)
+        }
         if (append) {
           setLoadedRows(prev => {
             const map = new Map(prev.map(r => [r.id, r]))
@@ -212,10 +227,22 @@ function DataPool() {
     ]
   )
 
-  // 進入頁／換 browse 伺服器條件 → 重查（精修與作廢不在依賴內）
+  // 進入頁／換 browse 伺服器條件 → 重查（等 manager 就緒；不覆蓋進階搜尋結果）
   useEffect(() => {
-    if (uid && email) runBrowse(false)
-  }, [uid, email, effectiveDays, effectivePageSize, managerScope, isManager, isSuperuser]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!uid || !email || !managerResolved) return
+    if (mode === 'advanced') return
+    runBrowse(false)
+  }, [
+    uid,
+    email,
+    managerResolved,
+    mode,
+    effectiveDays,
+    effectivePageSize,
+    managerScope,
+    isManager,
+    isSuperuser,
+  ]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const runAdvanced = async () => {
     // '' = 尚未選；'*' = 全部表格（明示）
@@ -250,6 +277,7 @@ function DataPool() {
         setMode('advanced')
         setHasMore(false)
         setCursorsRef.current = []
+        legExhaustedRef.current = []
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '查詢失敗')
