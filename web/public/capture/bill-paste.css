@@ -1,0 +1,500 @@
+
+
+#bill-paste-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  box-sizing: border-box;
+  font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+}
+#bill-paste-overlay .bp-dialog-wrap {
+  position: relative;
+  max-height: 95vh;
+  /* 780px +20% → 936px（橫式三欄預覽較不易裁切） */
+  max-width: min(936px, 100%);
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+#bill-paste-overlay .bp-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #1565c0;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+}
+#bill-paste-overlay .bp-header-hint {
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.9;
+  margin-top: 4px;
+}
+#bill-paste-overlay .bp-close {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 24px;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+#bill-paste-overlay .bp-close:hover { opacity: 0.85; }
+#bill-paste-overlay .bp-scroll {
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(95vh - 52px);
+  -webkit-overflow-scrolling: touch;
+}
+
+
+    * { box-sizing: border-box; }
+    #bill-paste-overlay .bp-panel {
+      font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #eceff1;
+      color: #333;
+      max-width: none;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    #bill-paste-overlay h1 { font-size: 1.25rem; margin: 0 0 12px; color: #1565c0; }
+    /* 左：控制項；右：預覽紙張；不換行（僅調整外層排版，不動內部區塊尺寸規則） */
+    #bill-paste-overlay .layout {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      gap: 24px;
+      align-items: flex-start;
+      justify-content: flex-start;
+    }
+    #bill-paste-overlay .col-guide {
+      flex: 0 0 auto;
+      flex-shrink: 0;
+      align-self: flex-start;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 12px;
+      max-width: 228px;
+      width: 228px;
+      padding-top: 2px;
+    }
+    #bill-paste-overlay .col-guide-credit {
+      margin: 0;
+      margin-top: auto;
+      padding-top: 10px;
+      width: 100%;
+      font-size: 10px;
+      line-height: 1.35;
+      color: #9e9e9e;
+      font-weight: 400;
+    }
+    #bill-paste-overlay .guide-thumb-row {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      gap: 6px;
+      align-items: flex-start;
+    }
+    #bill-paste-overlay .guide-thumb-row .guide-block {
+      margin-bottom: 0;
+      padding: 3px 4px;
+    }
+    #bill-paste-overlay .guide-thumb-row .a4-mock {
+      width: 46px;
+      padding: 2px;
+      gap: 1px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+    }
+    #bill-paste-overlay .guide-thumb-row .a4-mock .cell-outline {
+      font-size: 5px;
+    }
+    #bill-paste-overlay .guide-thumb-row .a4-mock-land {
+      width: 58px;
+      padding: 2px;
+      gap: 1px;
+    }
+    /* stretch：讓 .slots 有明確寬度（勿用 align-items:center，否則子項 shrink-to-fit 會害預覽縮成極小） */
+    #bill-paste-overlay .col-main {
+      flex: 1 1 auto;
+      flex-shrink: 0;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+    }
+    /* 色彩選項：緊接在版型縮圖下，直向排列與縮圖左緣對齊 */
+    #bill-paste-overlay .sidebar-color {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 7px;
+      margin: 0;
+      padding: 0;
+      font-size: 0.82rem;
+      color: #333;
+    }
+    #bill-paste-overlay .sidebar-color label {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #bill-paste-overlay .sidebar-note {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 4px;
+    }
+    #bill-paste-overlay .sidebar-note-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #424242;
+    }
+    #bill-paste-overlay .sidebar-note textarea {
+      width: 100%;
+      min-height: 4.5em;
+      max-height: 9em;
+      padding: 6px 8px;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #c62828;
+      border: 1px solid #bdbdbd;
+      border-radius: 6px;
+      resize: vertical;
+      font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+      background: #fff;
+    }
+    #bill-paste-overlay .sidebar-note textarea:focus {
+      outline: 2px solid rgba(25, 118, 210, 0.35);
+      outline-offset: 1px;
+      border-color: #1976d2;
+    }
+    #bill-paste-overlay .sidebar-note textarea::placeholder {
+      color: #b0bec5;
+    }
+    #bill-paste-overlay .sidebar-note-count {
+      font-size: 0.68rem;
+      color: #757575;
+      text-align: right;
+    }
+
+    #bill-paste-overlay .guide-block {
+      cursor: pointer;
+      padding: 4px 6px;
+      margin-bottom: 6px;
+      border-radius: 6px;
+      border: 2px solid transparent;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .guide-block:hover { background: rgba(0,0,0,0.03); }
+    #bill-paste-overlay .guide-block.active {
+      border-color: #1976d2;
+      background: rgba(25, 118, 210, 0.07);
+    }
+    .guide-block:focus { outline: 2px solid #1976d2; outline-offset: 2px; }
+
+    /* 左側版面縮圖：約為原視覺 25%（直式寬 65px ≈ 260×0.25） */
+    #bill-paste-overlay .a4-mock {
+      width: min(18vw, 65px);
+      aspect-ratio: 210 / 297;
+      background: #fafafa;
+      border: 1px solid #37474f;
+      border-radius: 2px;
+      display: flex;
+      flex-direction: column;
+      padding: 3px;
+      gap: 2px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    #bill-paste-overlay .a4-mock .cell-outline {
+      flex: 1 1 0;
+      min-height: 0;
+      border: 1px dashed rgba(76, 175, 80, 0.95);
+      border-radius: 1px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8px;
+      font-weight: 700;
+      color: #1976d2;
+      background: rgba(255,255,255,0.6);
+    }
+    .a4-mock .cell-outline:nth-child(1)::after { content: "A"; }
+    .a4-mock .cell-outline:nth-child(2)::after { content: "B"; }
+    .a4-mock-p3 .cell-outline:nth-child(1)::after { content: "A"; }
+    .a4-mock-p3 .cell-outline:nth-child(2)::after { content: "B"; }
+    .a4-mock-p3 .cell-outline:nth-child(3)::after { content: "C"; }
+
+    /* 橫式縮圖：寬 75px ≈ 300×0.25 */
+    #bill-paste-overlay .a4-mock-land {
+      width: min(23vw, 75px);
+      aspect-ratio: 297 / 210;
+      flex-direction: row;
+      padding: 3px;
+      gap: 1px;
+    }
+    #bill-paste-overlay .a4-mock-land .cell-outline {
+      flex: 1 1 0;
+      min-width: 0;
+      min-height: 0;
+    }
+    .a4-mock-l3 .cell-outline:nth-child(1)::after { content: "A"; }
+    .a4-mock-l3 .cell-outline:nth-child(2)::after { content: "B"; }
+    .a4-mock-l3 .cell-outline:nth-child(3)::after { content: "C"; }
+
+    #bill-paste-overlay .slots {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      min-width: 0;
+      align-items: flex-end;
+      gap: 0;
+    }
+    /*
+     * 直式「紙張」：外緣比例 21cm : 30cm，內距各 1cm → 內容區 19cm×28cm。
+     * 兩格各 19cm×13.2cm（190×132mm）；直式 A/B 間距 4.2mm（原 6mm 減 30%），其餘白底在 B 下方作說明區。
+     */
+    /*
+     * 浮起紙張陰影（純視覺）：光源假設在左上，陰影落在右與下。
+     * 偏移與紙張成比例——寬 21cm 時水平、高 30cm 時垂直皆約 0.7cm（寬×0.7/21、高×0.7/30）。
+     * 不透明度為先前基準的 120%；多層羽化；支援 container 時以 cqw/cqh 隨紙張縮放。
+     */
+    #bill-paste-overlay .paste-paper {
+      background: #fff;
+      border: 1px solid #cfd8dc;
+      border-radius: 2px;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.88),
+        0 0 0 1px rgba(0, 0, 0, 0.035),
+        0.7cm 0.7cm 10px rgba(15, 23, 42, 0.12),
+        0.7cm 0.7cm 20px rgba(15, 23, 42, 0.084),
+        0.7cm 0.7cm 34px rgba(15, 23, 42, 0.054);
+      box-sizing: border-box;
+      /* 目標寬度與最初單欄寬螢幕一致（12.6cm）；窄右欄時由 max-width:100% 縮放，不再用 60%×父寬（窄欄會把紙張壓太小） */
+      width: 12.6cm;
+      max-width: 100%;
+      margin-left: auto;
+      margin-right: 0;
+      aspect-ratio: 21 / 30;
+      padding: 1cm;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 4.2mm;
+      justify-content: flex-start;
+    }
+    @supports (container-type: size) {
+      #bill-paste-overlay .paste-paper {
+        container-type: size;
+        container-name: paste-paper;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.88),
+          0 0 0 1px rgba(0, 0, 0, 0.035),
+          calc(70cqw / 21) calc(70cqh / 30) calc((70cqw / 21 + 70cqh / 30) * 0.28) rgba(15, 23, 42, 0.12),
+          calc(70cqw / 21) calc(70cqh / 30) calc((70cqw / 21 + 70cqh / 30) * 0.55) rgba(15, 23, 42, 0.084),
+          calc(70cqw / 21) calc(70cqh / 30) calc((70cqw / 21 + 70cqh / 30) * 0.95) rgba(15, 23, 42, 0.054);
+      }
+    }
+    /* 橫式：頂部留白減半對齊 PDF（L_START_Y 2.5mm）；列靠上、底部留給說明區 */
+    #bill-paste-overlay.bp-mode-land .paste-paper {
+      width: calc(297mm * 0.6);
+      max-width: 100%;
+      aspect-ratio: 297 / 210;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 5mm;
+    }
+    #bill-paste-overlay .slot {
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      margin: 0;
+      background: transparent;
+      cursor: pointer;
+      width: 100%;
+      max-width: 100%;
+      display: flex;
+      justify-content: center;
+      transition: none;
+    }
+    #bill-paste-overlay.bp-mode-land .slot {
+      flex: 1 1 0;
+      min-width: 0;
+      max-width: none;
+      width: auto;
+    }
+    #bill-paste-overlay:not(.bp-mode-3) #bp-slot-c {
+      display: none !important;
+    }
+    #bill-paste-overlay .slot.active {
+      border: none;
+      box-shadow: none;
+    }
+    #bill-paste-overlay .slot .preview-wrap {
+      outline: 2px solid transparent;
+      outline-offset: 3px;
+      transition: outline-color 0.15s, outline-width 0.15s;
+    }
+    #bill-paste-overlay .slot.active .preview-wrap {
+      outline: 3px solid #1976d2;
+      outline-offset: 2px;
+    }
+    /* 直式：寬 19cm、高 13.2cm（190×132mm，與 PDF 單格一致） */
+    #bill-paste-overlay .preview-wrap {
+      position: relative;
+      width: 100%;
+      max-width: 100%;
+      margin: 0;
+      flex: 0 0 auto;
+      aspect-ratio: 190 / 132;
+      background: #263238;
+      border-radius: 3px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+    #bill-paste-overlay .preview-wrap .slot-letter {
+      font-size: clamp(1.35rem, min(6vw, 8vh), 2rem);
+      font-weight: 700;
+      color: #cfd8dc;
+      letter-spacing: 0.08em;
+      user-select: none;
+      pointer-events: none;
+      line-height: 1;
+    }
+    #bill-paste-overlay .preview-wrap img {
+      max-width: 100%;
+      max-height: 100%;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      display: block;
+    }
+    /* 橫式二格：單格比例 138:180（與 PDF 一致） */
+    #bill-paste-overlay.bp-mode-land:not(.bp-mode-3) .preview-wrap {
+      aspect-ratio: 138 / 180;
+      width: 100%;
+    }
+    /* 直式三格：190×84mm */
+    #bill-paste-overlay.bp-mode-3:not(.bp-mode-land) .paste-paper {
+      gap: 3mm;
+    }
+    #bill-paste-overlay.bp-mode-3:not(.bp-mode-land) .preview-wrap {
+      aspect-ratio: 190 / 84;
+    }
+    /* 橫式三欄：寬 (281−6)/3 mm、高 180mm → 275:540 */
+    #bill-paste-overlay.bp-mode-3.bp-mode-land .paste-paper {
+      gap: 3mm;
+    }
+    #bill-paste-overlay.bp-mode-3.bp-mode-land .preview-wrap {
+      aspect-ratio: 275 / 540;
+      width: 100%;
+    }
+    /* 單格：A/B 合併後的比例（直式 190×268.2mm、橫式 281×180mm）；只留 A 槽 */
+    #bill-paste-overlay.bp-mode-1 #bp-slot-b {
+      display: none !important;
+    }
+    #bill-paste-overlay.bp-mode-1:not(.bp-mode-land) .preview-wrap {
+      aspect-ratio: 190 / 268.2;
+    }
+    #bill-paste-overlay.bp-mode-1.bp-mode-land .preview-wrap {
+      aspect-ratio: 281 / 180;
+      width: 100%;
+    }
+
+    #bill-paste-overlay .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    #bill-paste-overlay .col-guide .toolbar {
+      margin-top: 0;
+      padding-top: 12px;
+      border-top: 1px solid #e0e0e0;
+      width: 100%;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+    }
+    #bill-paste-overlay .col-guide .toolbar button {
+      width: 100%;
+      padding: 9px 12px;
+      font-size: 0.82rem;
+    }
+    #bill-paste-overlay .col-guide .msg {
+      margin-top: 0;
+      font-size: 0.72rem;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+    #bill-paste-overlay button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    #bill-paste-overlay button.primary { background: #1976d2; color: #fff; }
+    #bill-paste-overlay button.primary:hover { background: #1565c0; }
+    #bill-paste-overlay button.secondary { background: #5c6bc0; color: #fff; }
+    #bill-paste-overlay button.secondary:hover { background: #3949ab; }
+    #bill-paste-overlay button.ghost { background: #fff; color: #c62828; border: 1px solid #e57373; }
+    #bill-paste-overlay button.ghost:hover:not(:disabled) { background: #ffebee; }
+    #bill-paste-overlay button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    #bill-paste-overlay .msg { margin-top: 10px; font-size: 0.85rem; min-height: 1.2em; }
+    #bill-paste-overlay .msg.err { color: #c62828; }
+    #bill-paste-overlay .msg.ok { color: #2e7d32; }
+
+    #bill-paste-overlay.bp-preview-gray .preview-wrap img {
+      filter: grayscale(100%);
+    }
+
+    #bill-paste-overlay .bp-ask {
+      display: none;
+      width: 100%;
+      margin-top: 8px;
+      padding: 10px;
+      border: 1px solid #90caf9;
+      border-radius: 8px;
+      background: #e3f2fd;
+      flex-direction: column;
+      gap: 8px;
+    }
+    #bill-paste-overlay .bp-ask.active { display: flex; }
+    #bill-paste-overlay .bp-ask-q {
+      font-size: 0.8rem;
+      font-weight: 600;
+      line-height: 1.45;
+      color: #0d47a1;
+    }
+    #bill-paste-overlay .bp-ask button { width: 100%; padding: 9px 12px; font-size: 0.82rem; }
+
+    /* 列印容器掛在 body 底下當直接子節點，畫面上永不顯示；列印樣式於送出前才動態注入 */
+    #bp-print-root { display: none; }
+  

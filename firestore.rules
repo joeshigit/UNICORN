@@ -1,300 +1,266 @@
 rules_version = '2';
+
+// ============================================
+// 🦄 UNICORN Capture — Firestore 安全規則
+//
+// 身分邊界：已驗證的 @dbyv.org
+// 角色：
+//   Superuser — 管理選項池／建表／看全部／代為更正作廢（不改擁有者）
+//   Manager   — 讀取所管表格的全部 submission（不可更正／作廢他人）
+//   Submitter — 填授權表格、讀自己的 submission、更正／作廢自己的鏈
+//
+// submissions 不可變：更正／作廢 = 新文件；舊文件只允許交棒指標。
+// ============================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // ============================================
-    // 輔助函數
-    // ============================================
-    
-    function isAuthenticated() {
+
+    function isSignedIn() {
       return request.auth != null;
     }
-    
-    function isCompanyUser() {
-      return isAuthenticated() && 
-             request.auth.token.email.matches('.*@dbyv\\.org$');
+
+    function authEmail() {
+      return request.auth.token.email.lower();
     }
-    
-    function isLeader() {
-      // Leader 名單（之後可以改成從 Firestore 讀取）
-      let leaders = [
-        'joeshi@dbyv.org'
-      ];
-      return isCompanyUser() && 
-             request.auth.token.email in leaders;
+
+    function isOrgUser() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.matches('.*@dbyv\\.org$');
     }
-    
-    function isOwner() {
-      return resource.data.createdBy == request.auth.token.email;
-    }
-    
-    function isNewOwner() {
-      return request.resource.data.createdBy == request.auth.token.email;
-    }
-    
-    // ============================================
-    // Templates（表格定義）
-    // ============================================
-    match /templates/{templateId} {
-      // 所有公司用戶可讀取
-      allow read: if isCompanyUser();
-      // 只有 Leader 可寫入
-      allow create: if isLeader();
-      allow update: if isLeader();
-      allow delete: if isLeader();
-      
-      // 🦄 UNICORN: Template 版本快照 subcollection
-      match /versions/{version} {
-        // 所有公司用戶可讀取（用於顯示舊 submission 的 template 結構）
-        allow read: if isCompanyUser();
-        // 只有 Leader 可寫入（透過 updateTemplate 函數）
-        allow create: if isLeader();
-        // 版本快照不可修改或刪除（immutable）
-        allow update: if false;
-        allow delete: if false;
-      }
-    }
-    
-    // ============================================
-    // 🦄 UNICORN: OptionSets（下拉選項池 - Governed Dictionary）
-    // Meaning Layer - 只有 Cloud Function（Admin SDK）可以寫入
-    // ============================================
-    match /optionSets/{optionSetId} {
-      // 所有公司用戶可讀取
-      allow read: if isCompanyUser();
-      // 🦄 UNICORN: 禁止客戶端直接寫入
-      // 所有變更必須透過 optionRequests 工作流
-      // 只有 Cloud Function（Admin SDK）可以寫入
-      allow create: if false;
-      allow update: if false;
-      allow delete: if false;
-    }
-    
-    // ============================================
-    // 🦄 UNICORN: Option Requests（選項變更申請）
-    // Workflow Layer - Leader 可建立，Admin 透過 Cloud Function 審核
-    // ============================================
-    match /optionRequests/{requestId} {
-      // 公司用戶可讀取（Leader 看自己的申請，Admin 看所有）
-      allow read: if isCompanyUser();
-      
-      // Leader 可以建立 pending 狀態的申請
-      allow create: if isLeader() &&
-                       request.resource.data.status == 'pending' &&
-                       request.resource.data.requestedBy == request.auth.token.email;
-      
-      // 🦄 UNICORN: 禁止客戶端直接 update
-      // 審核（pending → approved/rejected）必須透過 Cloud Function
-      allow update: if false;
-      
-      // 不允許刪除
-      allow delete: if false;
-    }
-    
-    // ============================================
-    // 🦄 UNICORN: Option Aliases（合併映射）
-    // Derived View - 只有 Cloud Function 可以寫入
-    // ============================================
-    match /optionAliases/{aliasId} {
-      // 公司用戶可讀取（用於解析歷史資料中的舊 code）
-      allow read: if isCompanyUser();
-      // 禁止客戶端寫入
-      allow create: if false;
-      allow update: if false;
-      allow delete: if false;
-    }
-    
-    // ============================================
-    // Submissions（提交資料）
-    // 🦄 UNICORN: Submission 是不可變事件
-    // ============================================
-    match /submissions/{submissionId} {
-      // 只能讀取自己的提交
-      allow read: if isCompanyUser() && isOwner();
-      // 建立時必須設定自己為 createdBy，且必須包含必要欄位
-      allow create: if isCompanyUser() && isNewOwner() &&
-                       request.resource.data.templateId != null &&
-                       request.resource.data.templateVersion != null &&
-                       request.resource.data._status == 'ACTIVE';
-      // 🦄 UNICORN: 禁止客戶端直接 update
-      // 狀態轉換（ACTIVE → CANCELLED）必須透過 Cloud Function
-      allow update: if false;
-      // 不允許刪除
-      allow delete: if false;
-    }
-    
-    // ============================================
-    // Leaders 查看所有 Submissions（匯出用）
-    // ============================================
-    match /submissions/{submissionId} {
-      allow read: if isLeader();
-    }
-    
-    // ============================================
-    // 🦄 UNICORN: Audit Logs（稀核記錄）
-    // 只有 Cloud Function（Admin SDK）可以寫入
-    // ============================================
-    match /auditLogs/{logId} {
-      // Leaders 可讀取稽核記錄
-      allow read: if isLeader();
-      // 禁止客戶端寫入（只有 Admin SDK 可以）
-      allow create: if false;
-      allow update: if false;
-      allow delete: if false;
-    }
-    
-    // ============================================
-    // 🦄 UNICORN: Draft System (Sandbox Layer)
-    // ============================================
-    
-    function isAdmin() {
-      let admins = [
-        'joeshi@dbyv.org'
-      ];
-      return isCompanyUser() && 
-             request.auth.token.email in admins;
-    }
-    
-    // 🦄 UNICORN: Superuser（可授權、可讀取所有用戶資料）
+
     function isSuperuser() {
-      let superusers = [
-        'tong@dbyv.org',
-        'jason@dbyv.org',
-        'joeshi@dbyv.org'
-      ];
-      return isCompanyUser() && 
-             request.auth.token.email in superusers;
+      return isOrgUser() && (
+        authEmail() == 'joeshi@dbyv.org'
+      );
     }
-    
-    function isDraftOwner() {
-      return resource.data.createdBy == request.auth.token.email;
+
+    function roleDocPath() {
+      return /databases/$(database)/documents/userRoles/$(authEmail());
     }
-    
-    function isDraftEditable() {
-      // Can only edit if status is 'draft' or 'rejected'
-      return resource.data.status == 'draft' || resource.data.status == 'rejected';
+
+    function hasRoleDoc() {
+      return isOrgUser() && exists(roleDocPath());
     }
-    
-    // ---------- OptionSet Drafts ----------
-    match /optionSetDrafts/{draftId} {
-      // Owner can read their own drafts, Admin can read all
-      allow read: if isCompanyUser() && (isDraftOwner() || isAdmin());
-      
-      // Leader can create with draft status
-      allow create: if isLeader() &&
-                       request.resource.data.status == 'draft' &&
-                       request.resource.data.createdBy == request.auth.token.email;
-      
-      // Owner can update only when draft is editable
-      // Can submit for review (change status to pending_review)
-      allow update: if isLeader() && isDraftOwner() && (
-                       // Case 1: Editing content (only when editable)
-                       (isDraftEditable() && request.resource.data.status in ['draft', 'pending_review']) ||
-                       // Case 2: Submitting for review
-                       (resource.data.status == 'draft' && request.resource.data.status == 'pending_review')
-                    );
-      
-      // Owner can delete their own drafts (when not pending)
-      allow delete: if isLeader() && isDraftOwner() && 
-                       resource.data.status != 'pending_review';
+
+    function getMyGroups() {
+      return hasRoleDoc() ? get(roleDocPath()).data.groups : [];
     }
-    
-    // ---------- Template Drafts ----------
-    match /templateDrafts/{draftId} {
-      // Owner can read their own drafts, Admin can read all
-      allow read: if isCompanyUser() && (isDraftOwner() || isAdmin());
-      
-      // Leader can create with draft status
-      allow create: if isLeader() &&
-                       request.resource.data.status == 'draft' &&
-                       request.resource.data.createdBy == request.auth.token.email;
-      
-      // Owner can update only when draft is editable
-      // Can submit for review (change status to pending_review)
-      allow update: if isLeader() && isDraftOwner() && (
-                       // Case 1: Editing content (only when editable)
-                       (isDraftEditable() && request.resource.data.status in ['draft', 'pending_review']) ||
-                       // Case 2: Submitting for review
-                       (resource.data.status == 'draft' && request.resource.data.status == 'pending_review')
-                    );
-      
-      // Owner can delete their own drafts (when not pending)
-      allow delete: if isLeader() && isDraftOwner() && 
-                       resource.data.status != 'pending_review';
+
+    function isListOfStrings(value) {
+      return value is list;
     }
-    
-    // ============================================
-    // 🦄 UNICORN: User Interaction Collections
-    // ============================================
-    
-    // ---------- userFormStats ----------
-    match /userFormStats/{statId} {
-      // Superuser 可讀取全部，一般用戶只能讀取自己的
-      allow read: if isCompanyUser() && (
-                     isSuperuser() ||
-                     resource.data.userEmail == request.auth.token.email
-                   );
-      
-      // 只能建立自己的 stats
-      allow create: if isCompanyUser() &&
-                       request.resource.data.userEmail == request.auth.token.email;
-      
-      // 🦄 UNICORN: 更新只能由 Cloud Function
-      allow update: if false;
+
+    function templatePath(templateId) {
+      return /databases/$(database)/documents/templates/$(templateId);
+    }
+
+    function templateExists(templateId) {
+      return exists(templatePath(templateId));
+    }
+
+    function getTemplate(templateId) {
+      return get(templatePath(templateId)).data;
+    }
+
+    function isManagerOfForm(templateId) {
+      return templateExists(templateId)
+        && getTemplate(templateId).keys().hasAny(['managerGroups'])
+        && isListOfStrings(getTemplate(templateId).managerGroups)
+        && getTemplate(templateId).managerGroups.size() > 0
+        && hasRoleDoc()
+        && isListOfStrings(getMyGroups())
+        && getMyGroups().hasAny(getTemplate(templateId).managerGroups);
+    }
+
+    function canFillTemplateData(data) {
+      return data.enabled == true && (
+        !data.keys().hasAny(['fillAccessType'])
+        || data.fillAccessType == 'allOrgUsers'
+        || (
+          data.fillAccessType == 'groups'
+          && data.keys().hasAny(['fillGroups'])
+          && isListOfStrings(data.fillGroups)
+          && data.fillGroups.size() > 0
+          && hasRoleDoc()
+          && isListOfStrings(getMyGroups())
+          && getMyGroups().hasAny(data.fillGroups)
+        )
+      );
+    }
+
+    function canFillTemplate(templateId) {
+      return templateExists(templateId) && canFillTemplateData(getTemplate(templateId));
+    }
+
+    // 清單／聚合查詢的規則是對「查詢條件推導出的 resource」求值，沒有被條件約束的
+    // 欄位是 undefined。所以清單查詢必須用 _submitterUid 過濾才判得出擁有者身分。
+    function isOwnerOfRecord() {
+      return isOrgUser()
+        && resource.data.keys().hasAll(['_submitterUid'])
+        && resource.data._submitterUid == request.auth.uid;
+    }
+
+    // 未約束 _templateId 的清單查詢應該乾淨地被拒，而不是丟出
+    // 「Property _templateId is undefined」這種難懂的錯誤
+    function recordHasTemplateId() {
+      return resource.data.keys().hasAll(['_templateId']);
+    }
+
+    function submissionPath(id) {
+      return /databases/$(database)/documents/submissions/$(id);
+    }
+
+    function chainParent() {
+      return get(submissionPath(request.resource.data._supersedes)).data;
+    }
+
+    function hasValidChainParent() {
+      return request.resource.data.keys().hasAny(['_supersedes'])
+        && request.resource.data._supersedes is string
+        && exists(submissionPath(request.resource.data._supersedes))
+        && chainParent()._isLatest == true
+        && chainParent()._submitterUid == request.resource.data._submitterUid
+        && chainParent()._submitterEmail.lower() == request.resource.data._submitterEmail.lower();
+    }
+
+    function actorIsSelf() {
+      return request.resource.data._actorUid == request.auth.uid
+        && request.resource.data._actorEmail.lower() == authEmail();
+    }
+
+    function ownerIsSelf() {
+      return request.resource.data._submitterUid == request.auth.uid
+        && request.resource.data._submitterEmail.lower() == authEmail();
+    }
+
+    function requiredCreateFields() {
+      return request.resource.data.keys().hasAll([
+        '_templateId', '_templateVersion', '_submittedMonth',
+        '_isLatest', '_status', '_eventKind',
+        '_submitterUid', '_submitterEmail',
+        '_actorUid', '_actorEmail',
+        '_eventType', '_templateModule', '_templateAction'
+      ])
+        && request.resource.data._templateId is string
+        && request.resource.data._templateVersion is number
+        && request.resource.data._submittedMonth is string
+        && request.resource.data._isLatest == true
+        && request.resource.data._eventType is string
+        && actorIsSelf();
+    }
+
+    function isValidCreateEvent() {
+      return request.resource.data._eventKind == 'CREATE'
+        && request.resource.data._status == 'ACTIVE'
+        && ownerIsSelf()
+        && !request.resource.data.keys().hasAny(['_supersedes'])
+        && canFillTemplate(request.resource.data._templateId);
+    }
+
+    function isValidCorrectionEvent() {
+      return request.resource.data._eventKind == 'CORRECTION'
+        && request.resource.data._status == 'ACTIVE'
+        && hasValidChainParent()
+        && (
+          ownerIsSelf()
+          || (
+            isSuperuser()
+            && request.resource.data._submitterUid == chainParent()._submitterUid
+            && request.resource.data._submitterEmail.lower() == chainParent()._submitterEmail.lower()
+          )
+        );
+    }
+
+    function isValidVoidEvent() {
+      return request.resource.data._eventKind == 'VOID'
+        && request.resource.data._status == 'VOID'
+        && hasValidChainParent()
+        && (
+          ownerIsSelf()
+          || (
+            isSuperuser()
+            && request.resource.data._submitterUid == chainParent()._submitterUid
+            && request.resource.data._submitterEmail.lower() == chainParent()._submitterEmail.lower()
+          )
+        );
+    }
+
+    // ---------- userRoles ----------
+    match /userRoles/{email} {
+      allow read: if isSuperuser() || (isOrgUser() && authEmail() == email);
+      allow write: if isSuperuser();
+    }
+
+    // ---------- optionSets：組織可讀，Superuser 可寫 ----------
+    match /optionSets/{optionSetId} {
+      allow read: if isOrgUser();
+      allow write: if isSuperuser();
+    }
+
+    // 標準 KEY 答案契約（key/type/valueModel/optionSet/scale）建立後不可改；僅 meaning/defaultLabel/status
+    function standardKeyMetaUpdateOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['meaning', 'defaultLabel', 'status', 'updatedAt'])
+        && (request.resource.data.status == 'active'
+            || request.resource.data.status == 'deprecated');
+    }
+
+    // ---------- standardKeys：組織標準 KEY；禁刪（只 deprecate）----------
+    match /standardKeys/{standardKeyId} {
+      allow read: if isOrgUser();
+      allow create: if isSuperuser();
+      allow update: if isSuperuser() && standardKeyMetaUpdateOnly();
       allow delete: if false;
     }
-    
-    // ---------- formAccessRequests ----------
-    match /formAccessRequests/{requestId} {
-      // Superuser 可讀取全部
-      // 一般用戶：申請者 或 表格擁有者/管理者 可讀取
-      allow read: if isCompanyUser() && (
-                     isSuperuser() ||
-                     resource.data.requesterEmail == request.auth.token.email ||
-                     resource.data.ownerEmail == request.auth.token.email ||
-                     request.auth.token.email in resource.data.managerEmails
-                   );
-      
-      // 建立時 requesterEmail 必須是自己
-      allow create: if isCompanyUser() &&
-                       request.resource.data.requesterEmail == request.auth.token.email &&
-                       request.resource.data.status == 'pending';
-      
-      // 🦄 UNICORN: 審核只能由 Cloud Function
-      allow update: if false;
-      allow delete: if false;
+
+    // ---------- templates ----------
+    match /templates/{templateId} {
+      allow read: if isSuperuser()
+        || (isOrgUser() && canFillTemplateData(resource.data))
+        || (isOrgUser() && isManagerOfForm(templateId));
+      allow write: if isSuperuser();
     }
-    
-    // ---------- templateSuggestions ----------
-    match /templateSuggestions/{suggestionId} {
-      // Superuser 可讀取全部
-      // 一般用戶：建議者 可讀取自己的
-      allow read: if isCompanyUser() && (
-                     isSuperuser() ||
-                     resource.data.suggesterEmail == request.auth.token.email
-                   );
-      
-      // 建立時 suggesterEmail 必須是自己
-      allow create: if isCompanyUser() &&
-                       request.resource.data.suggesterEmail == request.auth.token.email &&
-                       request.resource.data.status == 'pending';
-      
-      // 🦄 UNICORN: 審核只能由 Cloud Function
-      allow update: if false;
-      allow delete: if false;
+
+    // ---------- uploadSessions：送出前暫存擁有權 ----------
+    match /uploadSessions/{sessionId} {
+      allow read: if isOrgUser()
+        && (isSuperuser() || resource.data.uid == request.auth.uid);
+      allow create: if isOrgUser()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email.lower() == authEmail()
+        && request.resource.data.submissionId == sessionId
+        && request.resource.data.expiresAt is timestamp;
+      allow update: if isOrgUser()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.submissionId == resource.data.submissionId;
+      allow delete: if isOrgUser()
+        && (isSuperuser() || resource.data.uid == request.auth.uid);
     }
-    
-    // ---------- formNameRegistry ----------
-    match /formNameRegistry/{nameId} {
-      // Leader 和 Superuser 可讀取
-      allow read: if isLeader();
-      
-      // 🦄 UNICORN: 只有 Cloud Function 可以寫入
-      allow create: if false;
-      allow update: if false;
+
+    // ---------- submissions ----------
+    match /submissions/{submissionId} {
+      allow read: if isSuperuser()
+        || isOwnerOfRecord()
+        || (recordHasTemplateId() && isManagerOfForm(resource.data._templateId));
+
+      allow create: if isOrgUser()
+        && requiredCreateFields()
+        && (
+          isValidCreateEvent()
+          || isValidCorrectionEvent()
+          || isValidVoidEvent()
+        );
+
+      allow update: if (isSuperuser() || isOwnerOfRecord())
+        && request.resource.data.diff(resource.data)
+             .affectedKeys().hasOnly(['_isLatest', '_supersededBy'])
+        && resource.data._isLatest == true
+        && request.resource.data._isLatest == false
+        && request.resource.data._supersededBy is string;
+
       allow delete: if false;
     }
   }
 }
-
-
