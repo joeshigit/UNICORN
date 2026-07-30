@@ -36,6 +36,8 @@ import {
   usesOptionSet,
   validateFieldMode,
   validateScaleValueLabels,
+  yesNoOptions,
+  isYesNoField,
 } from '@/lib/keys'
 import type {
   FieldDefinition,
@@ -69,6 +71,24 @@ function PresetValueInput({
     : (field.presetValue ?? '')
 
   if (field.type === 'dropdown' || field.type === 'choice') {
+    if (field.yesNoAllowNa !== undefined) {
+      const items = yesNoOptions(field.yesNoAllowNa)
+      return (
+        <select
+          className="field"
+          value={single}
+          onChange={e => onChange(e.target.value || undefined)}
+        >
+          <option value="">未設定</option>
+          {items.map(option => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      )
+    }
+
     const active = options.filter(o => o.status !== 'deprecated')
 
     if (field.multiple) {
@@ -305,6 +325,7 @@ function FormBuilder() {
           delete locked.type
           delete locked.scalePoints
           delete locked.scaleValueLabels
+          delete locked.yesNoAllowNa
           if (locked.optionSetId !== undefined) {
             const set = optionSets.find(os => os.id === locked.optionSetId)
             if (!set || set.code !== field.key) delete locked.optionSetId
@@ -328,6 +349,7 @@ function FormBuilder() {
               next.optionSetId = undefined
               next.multiple = undefined
               next.scaleValueLabels = undefined
+              next.yesNoAllowNa = undefined
               if (fixed.type === 'scale') {
                 next.scalePoints = isValidScalePoints(next.scalePoints) ? next.scalePoints : 5
               } else {
@@ -338,6 +360,7 @@ function FormBuilder() {
               next.optionSetId = optionSets.find(os => os.code === patch.key && os.isMaster)?.id
               next.scalePoints = undefined
               next.scaleValueLabels = undefined
+              next.yesNoAllowNa = undefined
             }
             if (!next.label.trim()) {
               next.label = fixed?.label || optionSets.find(os => os.code === patch.key)?.name || ''
@@ -353,11 +376,13 @@ function FormBuilder() {
             next.optionSetId = undefined
             next.multiple = undefined
             next.scaleValueLabels = undefined
+            next.yesNoAllowNa = undefined
             next.scalePoints = isValidScalePoints(next.scalePoints) ? next.scalePoints : 5
           }
           if (patch.type === 'choice' || patch.type === 'dropdown') {
             next.scalePoints = undefined
             next.scaleValueLabels = undefined
+            next.yesNoAllowNa = undefined
             if (!next.optionSetId && next.key) {
               next.optionSetId = optionSets.find(os => os.code === next.key && os.isMaster)?.id
             }
@@ -395,8 +420,11 @@ function FormBuilder() {
     if (fields.length === 0) list.push('至少要有一個欄位')
     if (fields.some(f => !f.key)) list.push('每個欄位都要選 KEY')
     if (fields.some(f => !f.label.trim())) list.push('每個欄位都要有顯示名稱')
-    if (fields.some(f => usesOptionSet(f.type) && !f.optionSetId)) {
+    if (fields.some(f => usesOptionSet(f.type) && !isYesNoField(f) && !f.optionSetId)) {
       list.push('下拉／選擇題欄位要選一個標準選項')
+    }
+    if (fields.some(f => isYesNoField(f) && typeof f.yesNoAllowNa !== 'boolean')) {
+      list.push('是/否欄位缺少答案契約 snapshot')
     }
     if (fields.some(f => f.type === 'scale' && !isValidScalePoints(f.scalePoints))) {
       list.push('量表欄位要選刻度點數（3／4／5／10／100）')
@@ -412,7 +440,7 @@ function FormBuilder() {
       const problem = validateFieldMode(field)
       if (problem) list.push(problem.message)
 
-      if (usesOptionSet(field.type) && field.optionSetId) {
+      if (usesOptionSet(field.type) && !isYesNoField(field) && field.optionSetId) {
         const set = optionSets.find(os => os.id === field.optionSetId)
         if (set && set.code !== field.key) {
           list.push(`「${field.label || field.key}」的標準選項 code 必須等於 KEY`)
@@ -444,7 +472,7 @@ function FormBuilder() {
         list.push(`「${field.label || field.key}」寫死一個日期／時間，除了固定年度之類的情況通常是錯的`)
       }
 
-      if (usesOptionSet(field.type) && !isPresetEmpty(field.presetValue)) {
+      if (usesOptionSet(field.type) && !isYesNoField(field) && !isPresetEmpty(field.presetValue)) {
         const items = optionSets.find(os => os.id === field.optionSetId)?.items || []
         const picked = Array.isArray(field.presetValue) ? field.presetValue : [field.presetValue!]
         for (const value of picked) {
@@ -829,7 +857,13 @@ function FormBuilder() {
                   </div>
                 </div>
 
-                {usesOptionSet(field.type) && (
+                {isYesNoField(field) && (
+                  <p className="hint rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                    是/否（{field.yesNoAllowNa ? '是／否／不適用' : '是／否'}）— 由標準問題鎖定
+                  </p>
+                )}
+
+                {usesOptionSet(field.type) && !isYesNoField(field) && (
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div>
                       <label className="label mb-1 text-xs">顯示方式</label>

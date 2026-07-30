@@ -54,6 +54,8 @@ function StandardsPageInner() {
   const [scalePoints, setScalePoints] = useState<ScalePoints>(5)
   const [scaleKey, setScaleKey] = useState('')
   const [scaleLabels, setScaleLabels] = useState<ScaleValueLabel[]>(() => blankLabels(5))
+  const [yesNoKey, setYesNoKey] = useState('')
+  const [yesNoAllowNa, setYesNoAllowNa] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -88,6 +90,7 @@ function StandardsPageInner() {
 
   const freeKeyError = freeKey ? validateStandardKeyCode(freeKey) : null
   const scaleKeyError = scaleKey ? validateStandardKeyCode(scaleKey) : null
+  const yesNoKeyError = yesNoKey ? validateStandardKeyCode(yesNoKey) : null
   const scaleLabelError = validateScaleValueLabels(scalePoints, scaleLabels)
 
   const resetCreate = () => {
@@ -101,6 +104,8 @@ function StandardsPageInner() {
     setScalePoints(5)
     setScaleKey('')
     setScaleLabels(blankLabels(5))
+    setYesNoKey('')
+    setYesNoAllowNa(false)
   }
 
   const handleCreate = async () => {
@@ -141,7 +146,7 @@ function StandardsPageInner() {
           },
           email
         )
-      } else {
+      } else if (mode === 'scale') {
         if (scaleKeyError || takenKeys.has(scaleKey) || scaleLabelError) {
           throw new Error(scaleKeyError || scaleLabelError || '請填完整資料')
         }
@@ -155,6 +160,24 @@ function StandardsPageInner() {
             valueModel: 'scale',
             scalePoints,
             scaleValueLabels: scaleLabels,
+          },
+          email
+        )
+      } else {
+        if (yesNoKeyError || takenKeys.has(yesNoKey)) {
+          throw new Error(yesNoKeyError || '請填完整資料')
+        }
+        if (!meaning.trim() || !defaultLabel.trim()) throw new Error('請填意義與預設顯示名稱')
+        const vmErr = validateTypeValueModel('choice', 'yesNo')
+        if (vmErr) throw new Error(vmErr)
+        await createStandardKey(
+          {
+            key: yesNoKey.trim(),
+            meaning: meaning.trim(),
+            defaultLabel: defaultLabel.trim(),
+            type: 'choice',
+            valueModel: 'yesNo',
+            allowNa: yesNoAllowNa,
           },
           email
         )
@@ -243,6 +266,7 @@ function StandardsPageInner() {
               <option value="free">自由填寫（文字／數字／日期…）</option>
               <option value="optionSet">標準選項（KEY＝Master code）</option>
               <option value="scale">量表（固定 1…N 標籤）</option>
+              <option value="yesNo">是/否（標準）</option>
             </select>
           </div>
 
@@ -314,6 +338,39 @@ function StandardsPageInner() {
                   <option value="choice">選擇題（圓鈕／方框）</option>
                   <option value="dropdown">下拉選單</option>
                 </select>
+              </div>
+            </div>
+          )}
+
+          {mode === 'yesNo' && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="label mb-1">KEY</label>
+                <input
+                  className={`field font-mono ${yesNoKeyError || takenKeys.has(yesNoKey) ? 'field-error' : ''}`}
+                  value={yesNoKey}
+                  onChange={e => setYesNoKey(e.target.value)}
+                  placeholder="coun_riskSelfHarm"
+                />
+                {yesNoKeyError && <p className="mt-1 text-sm text-red-600">{yesNoKeyError}</p>}
+                {!yesNoKeyError && takenKeys.has(yesNoKey) && (
+                  <p className="mt-1 text-sm text-red-600">這個 KEY 已經在標準問題中</p>
+                )}
+              </div>
+              <div>
+                <label className="label mb-1">選項變體</label>
+                <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                    checked={yesNoAllowNa}
+                    onChange={e => setYesNoAllowNa(e.target.checked)}
+                  />
+                  含「不適用」（三元：是／否／不適用）
+                </label>
+                <p className="hint mt-1">
+                  {yesNoAllowNa ? 'yesNo · 是/否/不適用' : 'yesNo · 是/否'}
+                </p>
               </div>
             </div>
           )}
@@ -487,6 +544,8 @@ function StandardRow({
         {row.valueModel === 'optionSet' && ` · optionSetId=${row.optionSetId}`}
         {row.valueModel === 'scale' &&
           ` · ${row.scalePoints} 點：${(row.scaleValueLabels || []).map(l => l.label).join('／')}`}
+        {row.valueModel === 'yesNo' &&
+          ` · ${row.allowNa ? '是/否/不適用' : '是/否'}`}
         {row.valueModel === 'free' && ' · 自由填寫'}
       </p>
 

@@ -3,7 +3,7 @@
 import { DateTimePicker } from './DateTimePicker'
 import { FileUploader } from './FileUploader'
 import type { Actor } from '@/lib/db'
-import { resolveScaleValueLabels } from '@/lib/keys'
+import { resolveScaleValueLabels, yesNoOptions } from '@/lib/keys'
 import type { FieldDefinition, FileInfo, OptionItem } from '@/types'
 
 interface FieldInputProps {
@@ -102,6 +102,52 @@ export function FieldInput({
       )
 
     case 'choice': {
+      if (field.yesNoAllowNa !== undefined) {
+        const items = yesNoOptions(field.yesNoAllowNa)
+        const single = Array.isArray(value) ? (value[0] ?? '') : ((value as string) || '')
+        return (
+          <div className="space-y-1">
+            <div
+              className={`space-y-1 rounded-xl border p-2 ${
+                error
+                  ? 'border-red-300 bg-red-50'
+                  : disabled
+                    ? 'border-slate-200 bg-slate-50'
+                    : 'border-slate-300 bg-white'
+              }`}
+            >
+              {items.map(option => (
+                <label
+                  key={option.value}
+                  className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${
+                    disabled ? 'cursor-not-allowed text-slate-500' : 'cursor-pointer hover:bg-slate-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name={`yesno-${field.key}`}
+                    className="text-unicorn-600 focus:ring-unicorn-500"
+                    disabled={disabled}
+                    checked={single === option.value}
+                    onChange={() => onChange(option.value)}
+                  />
+                  <span className="text-sm">{option.label}</span>
+                </label>
+              ))}
+            </div>
+            {!field.required && single && !disabled && (
+              <button
+                type="button"
+                className="text-xs text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
+                onClick={() => onChange('')}
+              >
+                清除選擇
+              </button>
+            )}
+          </div>
+        )
+      }
+
       const active = options.filter(o => o.status !== 'deprecated')
       if (field.multiple) {
         const selected = Array.isArray(value) ? (value as string[]) : []

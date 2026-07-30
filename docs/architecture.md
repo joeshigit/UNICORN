@@ -31,7 +31,7 @@
 | 層 | Collection | 性質 |
 |----|-----------|------|
 | **Meaning** | `optionSets` | 字典。離散 VALUE 清單（code＝Universal KEY） |
-| **Meaning** | `standardKeys` | 組織標準 KEY＋答案契約（free／optionSet／scale） |
+| **Meaning** | `standardKeys` | 組織標準 KEY＋答案契約（free／optionSet／scale／yesNo） |
 | **Template** | `templates` | 表格定義（含填報／管理 ACL） |
 | **Submission** | `submissions` | 不可變事件，單一資料池 |
 | **Staging** | `uploadSessions` | 送出前檔案暫存擁有權（非業務真相） |
@@ -278,12 +278,23 @@ orderBy('_submittedAt', 'desc')
 | `free` | `demo_chineseName` | text／number／date… 自由值 |
 | `optionSet` | 既有 `school` | KEY＝optionSet.code（MVP）；可選同 code 子集 |
 | `scale` | `prog_satisfactionRating` | `scalePoints`＋`scaleValueLabels`（VALUE 必須 `"1"…"N"`） |
+| `yesNo` | `coun_riskSelfHarm` | `type: choice`；固定 VALUE `是`／`否`（或含 `不適用`）；`allowNa` 決定二元或三元；**不需** optionSet Master |
 
 - Active 答案契約 **immutable**；語義變更 → deprecate＋新 KEY  
-- 建表時 scale 標籤 **snapshot** 進 `FieldDefinition.scaleValueLabels`；填表不 live join 名冊  
+- 建表時 scale 標籤 **snapshot** 進 `FieldDefinition.scaleValueLabels`；yesNo 的 `allowNa` **snapshot** 進 `FieldDefinition.yesNoAllowNa`；填表不 live join 名冊  
 - 本表專用仍用 `FIXED_KEYS`（含 `rating*`）與未升格的 optionSet  
 - Rules：組織可讀、Superuser 可寫、**禁止 delete**  
 - 舊題庫／Registry 構想見歷史討論；產品入口為 Console「標準資料」
+
+**yesNo 查詢示例：**
+
+```js
+// 所有自伤风险 = 是
+where('coun_riskSelfHarm', 'array-contains', '是')
+
+// 未填（空白）
+where('coun_riskSelfHarmCount', '==', 0)
+```
 
 ---
 

@@ -57,10 +57,12 @@ export interface FieldDefinition {
   inputMode?: FieldInputMode
   /** default 必須有；locked 可有可無（可選答時等於鎖定為空白） */
   presetValue?: string | string[]
+  /** yesNo 標準題：建表時從 standardKeys.allowNa snapshot；填表/送出不 live join 名冊 */
+  yesNoAllowNa?: boolean
 }
 
 /** 標準資料的答案語義模型 */
-export type StandardValueModel = 'free' | 'optionSet' | 'scale'
+export type StandardValueModel = 'free' | 'optionSet' | 'scale' | 'yesNo'
 
 export type StandardKeyStatus = 'active' | 'deprecated'
 
@@ -78,6 +80,8 @@ export interface StandardKey {
   optionSetId?: string
   scalePoints?: ScalePoints
   scaleValueLabels?: ScaleValueLabel[]
+  /** yesNo only: false = 是/否; true = 是/否/不適用（答案契約，immutable） */
+  allowNa?: boolean
   status: StandardKeyStatus
   createdBy: string
   createdAt: unknown

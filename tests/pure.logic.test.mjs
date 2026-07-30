@@ -872,6 +872,12 @@ function scaleValueLabelsEqual(a, b) {
 function assertFieldMatchesStandard(field, standard, optionSetCode) {
   if (field.key !== standard.key) return 'KEY 不一致'
   if (field.type !== standard.type) return '題型鎖定'
+  if (standard.valueModel === 'yesNo') {
+    if (field.optionSetId) return '不應綁選項'
+    if (field.multiple) return '不可複選'
+    if (field.yesNoAllowNa !== standard.allowNa) return '是/否變體鎖定'
+    return null
+  }
   if (standard.valueModel === 'optionSet') {
     if (!field.optionSetId) return '要選選項清單'
     if (optionSetCode != null && optionSetCode !== field.key) return 'code 必須等於 KEY'
@@ -891,15 +897,35 @@ function applyStandardToField(field, standard) {
     ...field,
     key: standard.key,
     type: standard.type,
-    optionSetId: standard.optionSetId,
+    optionSetId: undefined,
+    multiple: undefined,
     scalePoints: standard.scalePoints,
     scaleValueLabels: standard.scaleValueLabels
       ? standard.scaleValueLabels.map(l => ({ ...l }))
       : undefined,
+    yesNoAllowNa: undefined,
     presetValue: undefined,
   }
+  if (standard.valueModel === 'optionSet') next.optionSetId = standard.optionSetId
+  if (standard.valueModel === 'yesNo') next.yesNoAllowNa = standard.allowNa
   if (!next.label?.trim()) next.label = standard.defaultLabel
   return next
+}
+
+const YES_NO_VALUES = ['是', '否']
+const YES_NO_NA_VALUES = ['是', '否', '不適用']
+
+function yesNoValueOrder(allowNa) {
+  return allowNa ? YES_NO_NA_VALUES : YES_NO_VALUES
+}
+
+function isValidTypeValueModelPair(type, valueModel) {
+  const free = ['text', 'textarea', 'number', 'date', 'time']
+  if (type === 'scale') return valueModel === 'scale'
+  if (type === 'dropdown') return valueModel === 'optionSet'
+  if (type === 'choice') return valueModel === 'optionSet' || valueModel === 'yesNo'
+  if (free.includes(type)) return valueModel === 'free'
+  return false
 }
 
 function activeStandardsForPicker(standards) {
@@ -1002,6 +1028,59 @@ describe('標準資料契約', () => {
     assert.deepEqual(optionSetCodesWithoutStandard(['school', 'dept'], [{ key: 'school' }]), [
       'dept',
     ])
+  })
+})
+
+describe('yesNo 標準契約', () => {
+  const yesNoStd = {
+    key: 'coun_riskSelfHarm',
+    type: 'choice',
+    valueModel: 'yesNo',
+    allowNa: false,
+    defaultLabel: '自伤风险评估',
+    status: 'active',
+  }
+
+  it('pair 驗證：choice 接受 optionSet 或 yesNo', () => {
+    assert.equal(isValidTypeValueModelPair('choice', 'optionSet'), true)
+    assert.equal(isValidTypeValueModelPair('choice', 'yesNo'), true)
+    assert.equal(isValidTypeValueModelPair('choice', 'free'), false)
+    assert.equal(isValidTypeValueModelPair('dropdown', 'yesNo'), false)
+  })
+
+  it('yesNoValueOrder：二元 vs 三元', () => {
+    assert.deepEqual(yesNoValueOrder(false), ['是', '否'])
+    assert.deepEqual(yesNoValueOrder(true), ['是', '否', '不適用'])
+  })
+
+  it('applyStandardToField snapshot allowNa', () => {
+    const field = applyStandardToField(
+      { key: '', type: 'text', label: '', required: false, order: 0 },
+      yesNoStd
+    )
+    assert.equal(field.yesNoAllowNa, false)
+    assert.equal(field.optionSetId, undefined)
+    assert.equal(assertFieldMatchesStandard(field, yesNoStd), null)
+  })
+
+  it('allowNa mismatch → reject', () => {
+    const field = {
+      key: 'coun_riskSelfHarm',
+      type: 'choice',
+      yesNoAllowNa: true,
+      label: 'x',
+      required: false,
+      order: 0,
+    }
+    assert.equal(assertFieldMatchesStandard(field, yesNoStd), '是/否變體鎖定')
+  })
+
+  it('submit order 來自 yesNoValueOrder', () => {
+    const order = yesNoValueOrder(false)
+    const p = threeShapePayload('是', order)
+    assert.deepEqual(p.values, ['是'])
+    assert.equal(p.combined, '是')
+    assert.equal(p.count, 1)
   })
 })
 
