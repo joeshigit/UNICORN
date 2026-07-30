@@ -198,6 +198,13 @@ service cloud.firestore {
       allow write: if isSuperuser();
     }
 
+    // ---------- standardKeys：組織標準 KEY；禁刪（只 deprecate）----------
+    match /standardKeys/{standardKeyId} {
+      allow read: if isOrgUser();
+      allow create, update: if isSuperuser();
+      allow delete: if false;
+    }
+
     // ---------- templates ----------
     match /templates/{templateId} {
       allow read: if isSuperuser()

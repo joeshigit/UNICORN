@@ -40,22 +40,24 @@ import {
   isLegacyDateKey,
   isPresetEmpty,
   isValidScalePoints,
-  scaleOptions,
+  resolveScaleValueLabels,
+  validateScaleValueLabels,
+  validateStandardKeyCode,
+  validateTypeValueModel,
   usesOptionSet,
   usesThreeShape,
 } from './keys'
-import type { ScalePoints } from '@/types'
-
-function scaleOptionsOrder(points: ScalePoints | undefined): string[] {
-  const n = isValidScalePoints(points) ? points : 5
-  return scaleOptions(n).map(o => o.value)
-}
 import type {
   FieldDefinition,
   FileInfo,
   FillAccessType,
   OptionItem,
   OptionSet,
+  ScalePoints,
+  ScaleValueLabel,
+  StandardKey,
+  StandardKeyStatus,
+  StandardValueModel,
   Submission,
   SubmissionEventKind,
   SubmissionStatus,
@@ -255,6 +257,120 @@ function normalizeItems(items: OptionSetInput['items']): OptionItem[] {
   return out
 }
 
+// ============================================
+// Standard Keys（標準資料）
+// ============================================
+
+export async function listStandardKeys(): Promise<StandardKey[]> {
+  const snap = await getDocsFromServer(query(collection(db, 'standardKeys'), orderBy('key')))
+  return snap.docs.map(d => ({ id: d.id, ...d.data() })) as StandardKey[]
+}
+
+export async function getStandardKey(id: string): Promise<StandardKey | null> {
+  const snap = await getDocFromServer(doc(db, 'standardKeys', id))
+  return snap.exists() ? ({ id: snap.id, ...snap.data() } as StandardKey) : null
+}
+
+export interface StandardKeyCreateInput {
+  key: string
+  meaning: string
+  defaultLabel: string
+  type: FieldDefinition['type']
+  valueModel: StandardValueModel
+  optionSetId?: string
+  scalePoints?: ScalePoints
+  scaleValueLabels?: ScaleValueLabel[]
+}
+
+export interface StandardKeyUpdateInput {
+  meaning?: string
+  defaultLabel?: string
+  status?: StandardKeyStatus
+}
+
+function assertCreatableStandard(input: StandardKeyCreateInput): void {
+  const codeErr = validateStandardKeyCode(input.key)
+  if (codeErr) throw new Error(codeErr)
+  const vmErr = validateTypeValueModel(input.type, input.valueModel)
+  if (vmErr) throw new Error(vmErr)
+  if (!input.defaultLabel.trim()) throw new Error('請填預設顯示名稱')
+  if (!input.meaning.trim()) throw new Error('請填意義說明')
+
+  if (input.valueModel === 'optionSet') {
+    if (!input.optionSetId) throw new Error('請選擇選項池（Master）')
+  } else if (input.valueModel === 'scale') {
+    const labelErr = validateScaleValueLabels(input.scalePoints, input.scaleValueLabels)
+    if (labelErr) throw new Error(labelErr)
+  } else if (input.optionSetId || input.scalePoints || input.scaleValueLabels?.length) {
+    throw new Error('自由填寫型標準資料不能帶選項池或量表契約')
+  }
+}
+
+export async function createStandardKey(input: StandardKeyCreateInput, userEmail: string): Promise<string> {
+  assertCreatableStandard(input)
+
+  const existing = await listStandardKeys()
+  if (existing.some(s => s.key === input.key.trim())) {
+    throw new Error(`標準 KEY「${input.key.trim()}」已經存在（含已停用）`)
+  }
+
+  if (input.valueModel === 'optionSet' && input.optionSetId) {
+    const set = await getOptionSet(input.optionSetId)
+    if (!set || !set.isMaster) throw new Error('選項池型標準必須綁定 Master')
+    if (set.code !== input.key.trim()) {
+      throw new Error('MVP：標準 KEY 必須等於選項池 code')
+    }
+  }
+
+  const id = newId('standardKeys')
+  const isScale = input.valueModel === 'scale'
+  const isOption = input.valueModel === 'optionSet'
+  await setDoc(
+    doc(db, 'standardKeys', id),
+    stripUndefined({
+      key: input.key.trim(),
+      meaning: input.meaning.trim(),
+      defaultLabel: input.defaultLabel.trim(),
+      type: input.type,
+      valueModel: input.valueModel,
+      optionSetId: isOption ? input.optionSetId : undefined,
+      scalePoints: isScale ? input.scalePoints : undefined,
+      scaleValueLabels: isScale
+        ? input.scaleValueLabels!.map(l => ({ value: l.value, label: l.label.trim() }))
+        : undefined,
+      status: 'active' as StandardKeyStatus,
+      createdBy: userEmail,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+  )
+  return id
+}
+
+/** 僅允許改 meaning／defaultLabel／status；答案契約 immutable */
+export async function updateStandardKey(id: string, input: StandardKeyUpdateInput): Promise<void> {
+  const current = await getStandardKey(id)
+  if (!current) throw new Error('找不到這筆標準資料')
+
+  const meaning = input.meaning !== undefined ? input.meaning.trim() : current.meaning
+  const defaultLabel =
+    input.defaultLabel !== undefined ? input.defaultLabel.trim() : current.defaultLabel
+  if (!meaning) throw new Error('請填意義說明')
+  if (!defaultLabel) throw new Error('請填預設顯示名稱')
+
+  const status = input.status ?? current.status
+  if (status !== 'active' && status !== 'deprecated') {
+    throw new Error('狀態只能是 active 或 deprecated')
+  }
+
+  await updateDoc(doc(db, 'standardKeys', id), {
+    meaning,
+    defaultLabel,
+    status,
+    updatedAt: serverTimestamp(),
+  })
+}
+
 export async function createOptionSet(input: OptionSetInput, userEmail: string): Promise<string> {
   const id = newId('optionSets')
   await setDoc(
@@ -393,6 +509,13 @@ function normalizeInputMode(f: FieldDefinition): Pick<FieldDefinition, 'inputMod
   }
 }
 
+function cleanScaleValueLabels(f: FieldDefinition, scalePoints: ScalePoints | undefined): ScaleValueLabel[] | undefined {
+  if (f.type !== 'scale' || !scalePoints) return undefined
+  if (!f.scaleValueLabels?.length) return undefined
+  if (validateScaleValueLabels(scalePoints, f.scaleValueLabels)) return undefined
+  return f.scaleValueLabels.map(l => ({ value: l.value, label: l.label.trim() }))
+}
+
 function cleanFields(fields: FieldDefinition[]): FieldDefinition[] {
   return fields.map((f, i) => {
     const { inputMode, presetValue } = normalizeInputMode(f)
@@ -408,6 +531,7 @@ function cleanFields(fields: FieldDefinition[]): FieldDefinition[] {
       optionSetId: usesOptionSet(f.type) ? f.optionSetId : undefined,
       multiple: f.type === 'choice' && f.multiple ? true : f.type === 'dropdown' && f.multiple ? true : undefined,
       scalePoints,
+      scaleValueLabels: cleanScaleValueLabels(f, scalePoints),
       inputMode,
       presetValue,
     })
@@ -576,7 +700,7 @@ function buildSubmissionDoc(
       // dropdown／choice／scale：空白＝[] / '' / 0，不是 null（Count 可查）
       const order =
         field.type === 'scale'
-          ? scaleOptionsOrder(field.scalePoints)
+          ? resolveScaleValueLabels(field).map(o => o.value)
           : optionOrder[field.key]
       const picked = canonicalOrder(asArray(values[field.key]), order)
       payload[field.key] = picked

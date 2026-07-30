@@ -32,8 +32,14 @@ export type ScalePoints = 3 | 4 | 5 | 10 | 100
  */
 export type FieldInputMode = 'open' | 'default' | 'locked'
 
+/** 量表刻度 VALUE→LABEL（標準資料 snapshot；本表 rating* 可無） */
+export interface ScaleValueLabel {
+  value: string
+  label: string
+}
+
 // ---------- 欄位定義 ----------
-// key 必須是 Universal KEY（FIXED_KEYS 或 optionSet.code）
+// key 必須是 Universal KEY（FIXED_KEYS、optionSet.code、或 standardKeys.key）
 export interface FieldDefinition {
   key: string
   type: FieldType
@@ -45,10 +51,37 @@ export interface FieldDefinition {
   multiple?: boolean
   /** 僅 scale；3／4／5／10／100 */
   scalePoints?: ScalePoints
+  /** 標準 scale 建表時深拷貝；本表 rating* 不寫 */
+  scaleValueLabels?: ScaleValueLabel[]
   /** 未設定＝open，舊模板天然相容 */
   inputMode?: FieldInputMode
   /** default 必須有；locked 可有可無（可選答時等於鎖定為空白） */
   presetValue?: string | string[]
+}
+
+/** 標準資料的答案語義模型 */
+export type StandardValueModel = 'free' | 'optionSet' | 'scale'
+
+export type StandardKeyStatus = 'active' | 'deprecated'
+
+/**
+ * Meaning：組織標準 KEY＋答案契約（獨立於 optionSets）。
+ * optionSet 型：MVP 要求 key === optionSet.code。
+ */
+export interface StandardKey {
+  id?: string
+  key: string
+  meaning: string
+  defaultLabel: string
+  type: FieldType
+  valueModel: StandardValueModel
+  optionSetId?: string
+  scalePoints?: ScalePoints
+  scaleValueLabels?: ScaleValueLabel[]
+  status: StandardKeyStatus
+  createdBy: string
+  createdAt: unknown
+  updatedAt: unknown
 }
 
 /** 誰可以填這張表 */

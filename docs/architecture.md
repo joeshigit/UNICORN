@@ -8,7 +8,8 @@
 
 | 層 | Collection | 性質 |
 |----|-----------|------|
-| **Meaning** | `optionSets` | 字典。KEY 與合法 VALUE |
+| **Meaning** | `optionSets` | 字典。離散 VALUE 清單（code＝Universal KEY） |
+| **Meaning** | `standardKeys` | 組織標準 KEY＋答案契約（free／optionSet／scale） |
 | **Template** | `templates` | 表格定義（含填報／管理 ACL） |
 | **Submission** | `submissions` | 不可變事件，單一資料池 |
 | **Staging** | `uploadSessions` | 送出前檔案暫存擁有權（非業務真相） |
@@ -240,9 +241,25 @@ orderBy('_submittedAt', 'desc')
 - 量表**不是** optionSet，也不用 likert code 當欄位 KEY
 - 矩陣建題＝建表批次產生多個扁平 `scale` 欄位，共用同一 `scalePoints`；submission **沒有**巢狀 matrix
 - `dropdown`／`choice`／`scale` 送出時都寫三形狀（陣列／Combined／Count）
-- 題庫（靜態／動態）不在本範圍
-
 查詢量表答案用題目 KEY（存成陣列三形狀），例如 `where('rating1', 'array-contains', '3')`，或查 `rating1Combined`／`rating1Count`；不是查 `likert3` 這類自定義 KEY。
+
+---
+
+## 8b. 標準資料（standardKeys）
+
+組織認定可跨表重用的資料概念：規定 **KEY** 與 **答案格式**；不是題幹貼上庫，也不自動建立 Firestore 索引。
+
+| valueModel | 例子 | 契約 |
+|------------|------|------|
+| `free` | `emerContact` | text／number／date… 自由值 |
+| `optionSet` | 既有 `school` | KEY＝optionSet.code（MVP）；可選同 code 子集 |
+| `scale` | `serEvaluation` | `scalePoints`＋`scaleValueLabels`（VALUE 必須 `"1"…"N"`） |
+
+- Active 答案契約 **immutable**；語義變更 → deprecate＋新 KEY  
+- 建表時 scale 標籤 **snapshot** 進 `FieldDefinition.scaleValueLabels`；填表不 live join 名冊  
+- 本表專用仍用 `FIXED_KEYS`（含 `rating*`）與未升格的 optionSet  
+- Rules：組織可讀、Superuser 可寫、**禁止 delete**  
+- 舊題庫／Registry 構想見歷史討論；產品入口為 Console「標準資料」
 
 ---
 

@@ -18,12 +18,7 @@ import {
   getUserRole,
   newSubmissionId,
 } from '@/lib/db'
-import {
-  SCALE_DIRECTION_HINT,
-  isValidScalePoints,
-  resolveInitialValue,
-  scaleOptions,
-} from '@/lib/keys'
+import { SCALE_DIRECTION_HINT, resolveInitialValue, resolveScaleValueLabels } from '@/lib/keys'
 import type { FileInfo, OptionItem, Submission, Template } from '@/types'
 
 function SubmitForm() {
@@ -216,8 +211,7 @@ function SubmitForm() {
         }
 
         if (field.type === 'scale') {
-          const points = isValidScalePoints(field.scalePoints) ? field.scalePoints : 5
-          const items = scaleOptions(points)
+          const items = resolveScaleValueLabels(field)
           optionOrder[field.key] = items.map(i => i.value)
           const picked = Array.isArray(value) ? (value as string[]) : value ? [value as string] : []
           optionLabels[field.key] = items

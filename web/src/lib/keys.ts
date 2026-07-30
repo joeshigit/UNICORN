@@ -10,7 +10,14 @@
 //   2. optionSet.code   — 每建一個選項池就多一個 dropdown KEY
 // ============================================
 
-import type { FieldDefinition, FieldType, ScalePoints } from '@/types'
+import type {
+  FieldDefinition,
+  FieldType,
+  ScalePoints,
+  ScaleValueLabel,
+  StandardKey,
+  StandardValueModel,
+} from '@/types'
 
 export interface FixedKeyMeta {
   type: FieldType
@@ -102,8 +109,8 @@ export function isValidScalePoints(n: unknown): n is ScalePoints {
   return SCALE_POINTS_OPTIONS.includes(n as ScalePoints)
 }
 
-/** 系統中性刻度選項（value 固定 "1"…"N"） */
-export function scaleOptions(points: ScalePoints): Array<{ value: string; label: string }> {
+/** 系統中性刻度選項（value 固定 "1"…"N"；本表 rating* 用） */
+export function scaleOptions(points: ScalePoints): ScaleValueLabel[] {
   if (points === 3) {
     return [
       { value: '1', label: '不喜歡' },
@@ -132,6 +139,168 @@ export function scaleOptions(points: ScalePoints): Array<{ value: string; label:
     const value = String(i + 1)
     return { value, label: value }
   })
+}
+
+/** 嚴格驗證標準／欄位上的 scaleValueLabels */
+export function validateScaleValueLabels(
+  points: unknown,
+  labels: unknown
+): string | null {
+  if (!isValidScalePoints(points)) return '請選擇有效的量表點數'
+  if (!Array.isArray(labels)) return '量表標籤必須是清單'
+  if (labels.length !== points) return `量表標籤必須正好 ${points} 個`
+  for (let i = 0; i < points; i++) {
+    const expected = String(i + 1)
+    const row = labels[i] as { value?: unknown; label?: unknown }
+    if (!row || typeof row !== 'object') return `第 ${expected} 點標籤格式不正確`
+    if (row.value !== expected) {
+      return `量表 VALUE 必須依序為 "1"…"${points}"（不可缺號或使用 "01"）`
+    }
+    if (typeof row.label !== 'string' || !row.label.trim()) {
+      return `第 ${expected} 點需要標籤文字`
+    }
+  }
+  return null
+}
+
+export function copyScaleValueLabels(labels: ScaleValueLabel[]): ScaleValueLabel[] {
+  return labels.map(l => ({ value: l.value, label: l.label }))
+}
+
+/** 填表／建表預覽：有通過驗證的 snapshot 就用它，否則系統預設刻度 */
+export function resolveScaleValueLabels(field: Pick<FieldDefinition, 'scalePoints' | 'scaleValueLabels'>): ScaleValueLabel[] {
+  const points = isValidScalePoints(field.scalePoints) ? field.scalePoints : 5
+  if (field.scaleValueLabels && !validateScaleValueLabels(points, field.scaleValueLabels)) {
+    return copyScaleValueLabels(field.scaleValueLabels)
+  }
+  return scaleOptions(points)
+}
+
+export const FREE_STANDARD_TYPES: FieldType[] = ['text', 'textarea', 'number', 'date', 'time']
+
+export function expectedValueModel(type: FieldType): StandardValueModel | null {
+  if (type === 'scale') return 'scale'
+  if (type === 'dropdown' || type === 'choice') return 'optionSet'
+  if (FREE_STANDARD_TYPES.includes(type)) return 'free'
+  return null
+}
+
+export function validateTypeValueModel(type: FieldType, valueModel: StandardValueModel): string | null {
+  const expected = expectedValueModel(type)
+  if (!expected) return `標準資料不支援題型「${type}」`
+  if (valueModel !== expected) return `題型「${type}」的答案模型必須是 ${expected}`
+  return null
+}
+
+/** 與 optionSet code 相同規則，另禁 reserved codes */
+export function validateStandardKeyCode(code: string): string | null {
+  const base = validateOptionSetCode(code)
+  if (base) return base
+  if ((RESERVED_CODES as readonly string[]).includes(code)) {
+    return `「${code}」是系統保留 KEY，不能當作標準資料`
+  }
+  return null
+}
+
+export function findStandardByKey<T extends Pick<StandardKey, 'key'>>(
+  standards: T[],
+  key: string
+): T | undefined {
+  return standards.find(s => s.key === key)
+}
+
+/** 建表選單：僅 active */
+export function activeStandardsForPicker<T extends Pick<StandardKey, 'status'>>(standards: T[]): T[] {
+  return standards.filter(s => s.status === 'active')
+}
+
+/** 選項池組：排除已有 standardKey（active 或 deprecated）的 code，避免雙入口 */
+export function optionSetCodesWithoutStandard(
+  masterCodes: string[],
+  standards: Array<Pick<StandardKey, 'key'>>
+): string[] {
+  const taken = new Set(standards.map(s => s.key))
+  return masterCodes.filter(c => !taken.has(c))
+}
+
+export function scaleValueLabelsEqual(a: ScaleValueLabel[] | undefined, b: ScaleValueLabel[] | undefined): boolean {
+  if (!a || !b || a.length !== b.length) return false
+  return a.every((row, i) => row.value === b[i].value && row.label === b[i].label)
+}
+
+/**
+ * 建表契約：欄位必須符合標準（含 deprecated）。
+ * optionSetCode = 選中 optionSet 的 code（由呼叫端傳入）。
+ */
+export function assertFieldMatchesStandard(
+  field: FieldDefinition,
+  standard: Pick<
+    StandardKey,
+    'key' | 'type' | 'valueModel' | 'optionSetId' | 'scalePoints' | 'scaleValueLabels'
+  >,
+  optionSetCode?: string | null
+): string | null {
+  if (field.key !== standard.key) return `欄位 KEY 與標準「${standard.key}」不一致`
+  if (field.type !== standard.type) {
+    return `「${standard.key}」的題型由標準資料鎖定為 ${standard.type}`
+  }
+  const vmErr = validateTypeValueModel(standard.type, standard.valueModel)
+  if (vmErr) return vmErr
+
+  if (standard.valueModel === 'optionSet') {
+    if (!field.optionSetId) return `「${standard.key}」要選一個選項清單`
+    if (optionSetCode != null && optionSetCode !== field.key) {
+      return `「${standard.key}」只能使用 code 相同的選項池（含子集）`
+    }
+    return null
+  }
+
+  if (standard.valueModel === 'scale') {
+    if (!isValidScalePoints(standard.scalePoints) || field.scalePoints !== standard.scalePoints) {
+      return `「${standard.key}」的刻度點數由標準資料鎖定`
+    }
+    const labelErr = validateScaleValueLabels(field.scalePoints, field.scaleValueLabels)
+    if (labelErr) return `「${standard.key}」：${labelErr}`
+    if (!scaleValueLabelsEqual(field.scaleValueLabels, standard.scaleValueLabels)) {
+      return `「${standard.key}」的量表標籤由標準資料鎖定，不能改成系統預設或其他文案`
+    }
+    return null
+  }
+
+  // free
+  if (field.optionSetId) return `「${standard.key}」是自由填寫，不應綁選項池`
+  if (field.scaleValueLabels?.length) return `「${standard.key}」不是量表，不應有量表標籤`
+  return null
+}
+
+/** 選標準 KEY 時套用契約（深拷貝 labels） */
+export function applyStandardToField(
+  field: FieldDefinition,
+  standard: StandardKey
+): FieldDefinition {
+  const next: FieldDefinition = {
+    ...field,
+    key: standard.key,
+    type: standard.type,
+    optionSetId: undefined,
+    multiple: undefined,
+    scalePoints: undefined,
+    scaleValueLabels: undefined,
+    presetValue: undefined,
+  }
+  if (!next.label.trim()) next.label = standard.defaultLabel
+
+  if (standard.valueModel === 'optionSet') {
+    next.optionSetId = standard.optionSetId
+  } else if (standard.valueModel === 'scale') {
+    next.scalePoints = standard.scalePoints
+    next.scaleValueLabels = standard.scaleValueLabels
+      ? copyScaleValueLabels(standard.scaleValueLabels)
+      : undefined
+  }
+
+  if (!canPresetFieldType(next.type)) next.inputMode = undefined
+  return next
 }
 
 /** dropdown／choice 都用 optionSet；scale 用系統刻度 */

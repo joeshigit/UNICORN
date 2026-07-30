@@ -122,6 +122,12 @@ before(async () => {
     await setDoc(doc(d, 'templates', T_NOMGR), template({ managerGroups: [] }))
     await setDoc(doc(d, 'optionSets', 'o1'), { code: 'school', name: '學校', items: [] })
     await setDoc(doc(d, `userRoles/${MANAGER}`), { groups: ['SCD Manager'] })
+    await setDoc(doc(d, 'standardKeys', 'sk0'), {
+      key: 'emerContact',
+      type: 'text',
+      valueModel: 'free',
+      status: 'active',
+    })
 
     await setDoc(doc(d, 'submissions', 'own1'), submission())
     await setDoc(doc(d, 'submissions', 'own_nomgr'), submission({ _templateId: T_NOMGR }))
@@ -151,6 +157,11 @@ describe('組織使用者的基本讀取', () => {
   it('列出選項池', async () => {
     const snap = await getDocs(collection(fs(PLAIN), 'optionSets'))
     assert.equal(snap.size, 1)
+  })
+
+  it('讀標準資料', async () => {
+    const snap = await getDoc(doc(fs(PLAIN), 'standardKeys/sk0'))
+    assert.ok(snap.exists())
   })
 
   it('讀 allOrgUsers 的模板', async () => {
@@ -348,6 +359,19 @@ describe('Superuser', () => {
   it('寫模板與選項池', async () => {
     await setDoc(doc(fs(SUPER), 'templates/t_new'), template())
     await setDoc(doc(fs(SUPER), 'optionSets/o2'), { code: 'dept' })
+  })
+
+  it('寫標準資料', async () => {
+    await setDoc(doc(fs(SUPER), 'standardKeys/sk1'), {
+      key: 'emerContact',
+      type: 'text',
+      valueModel: 'free',
+      status: 'active',
+    })
+  })
+
+  it('讀標準資料', async () => {
+    assert.ok((await getDoc(doc(fs(SUPER), 'standardKeys/sk1'))).exists())
   })
 
   it('指派群組', () =>

@@ -841,3 +841,161 @@ describe('量表與矩陣', () => {
     assert.equal(blank.count, 0)
   })
 })
+
+// ---------- 標準資料（對應 keys.ts standardKeys helpers）----------
+
+function validateScaleValueLabels(points, labels) {
+  if (![3, 4, 5, 10, 100].includes(points)) return '請選擇有效的量表點數'
+  if (!Array.isArray(labels)) return '量表標籤必須是清單'
+  if (labels.length !== points) return `量表標籤必須正好 ${points} 個`
+  for (let i = 0; i < points; i++) {
+    const expected = String(i + 1)
+    const row = labels[i]
+    if (!row || row.value !== expected) {
+      return `量表 VALUE 必須依序為 "1"…"${points}"（不可缺號或使用 "01"）`
+    }
+    if (typeof row.label !== 'string' || !row.label.trim()) return `第 ${expected} 點需要標籤文字`
+  }
+  return null
+}
+
+function scaleValueLabelsEqual(a, b) {
+  if (!a || !b || a.length !== b.length) return false
+  return a.every((row, i) => row.value === b[i].value && row.label === b[i].label)
+}
+
+function assertFieldMatchesStandard(field, standard, optionSetCode) {
+  if (field.key !== standard.key) return 'KEY 不一致'
+  if (field.type !== standard.type) return '題型鎖定'
+  if (standard.valueModel === 'optionSet') {
+    if (!field.optionSetId) return '要選選項清單'
+    if (optionSetCode != null && optionSetCode !== field.key) return 'code 必須等於 KEY'
+    return null
+  }
+  if (standard.valueModel === 'scale') {
+    if (field.scalePoints !== standard.scalePoints) return '點數鎖定'
+    if (validateScaleValueLabels(field.scalePoints, field.scaleValueLabels)) return '標籤無效'
+    if (!scaleValueLabelsEqual(field.scaleValueLabels, standard.scaleValueLabels)) return '標籤鎖定'
+    return null
+  }
+  return null
+}
+
+function applyStandardToField(field, standard) {
+  const next = {
+    ...field,
+    key: standard.key,
+    type: standard.type,
+    optionSetId: standard.optionSetId,
+    scalePoints: standard.scalePoints,
+    scaleValueLabels: standard.scaleValueLabels
+      ? standard.scaleValueLabels.map(l => ({ ...l }))
+      : undefined,
+    presetValue: undefined,
+  }
+  if (!next.label?.trim()) next.label = standard.defaultLabel
+  return next
+}
+
+function activeStandardsForPicker(standards) {
+  return standards.filter(s => s.status === 'active')
+}
+
+function optionSetCodesWithoutStandard(masterCodes, standards) {
+  const taken = new Set(standards.map(s => s.key))
+  return masterCodes.filter(c => !taken.has(c))
+}
+
+describe('標準資料契約', () => {
+  const ser = {
+    key: 'serEvaluation',
+    type: 'scale',
+    valueModel: 'scale',
+    scalePoints: 5,
+    scaleValueLabels: [
+      { value: '1', label: '很不滿意' },
+      { value: '2', label: '不滿意' },
+      { value: '3', label: '一般' },
+      { value: '4', label: '滿意' },
+      { value: '5', label: '很滿意' },
+    ],
+    defaultLabel: '活動評分',
+    status: 'active',
+  }
+
+  it('A：契約 mismatch → reject', () => {
+    const field = {
+      key: 'serEvaluation',
+      type: 'scale',
+      scalePoints: 10,
+      scaleValueLabels: ser.scaleValueLabels,
+      label: 'x',
+      required: false,
+      order: 0,
+    }
+    assert.equal(assertFieldMatchesStandard(field, ser), '點數鎖定')
+  })
+
+  it('B：deprecated 不在可選列表', () => {
+    const list = activeStandardsForPicker([
+      { key: 'a', status: 'active' },
+      { key: 'b', status: 'deprecated' },
+    ])
+    assert.deepEqual(
+      list.map(s => s.key),
+      ['a']
+    )
+  })
+
+  it('C：deprecated + 契約正確 → 通過', () => {
+    const field = applyStandardToField(
+      { key: '', type: 'text', label: '', required: false, order: 0 },
+      { ...ser, status: 'deprecated' }
+    )
+    assert.equal(assertFieldMatchesStandard(field, { ...ser, status: 'deprecated' }), null)
+  })
+
+  it('D：snapshot 深拷貝，改副本不影響來源', () => {
+    const field = applyStandardToField(
+      { key: '', type: 'text', label: '', required: false, order: 0 },
+      ser
+    )
+    field.scaleValueLabels[0].label = '被改了'
+    assert.equal(ser.scaleValueLabels[0].label, '很不滿意')
+  })
+
+  it('E：scaleValueLabels 缺號／01 → reject', () => {
+    assert.ok(validateScaleValueLabels(5, [{ value: '01', label: 'x' }]))
+    assert.ok(
+      validateScaleValueLabels(3, [
+        { value: '1', label: 'a' },
+        { value: '2', label: 'b' },
+      ])
+    )
+  })
+
+  it('F：optionSetId.code ≠ key → reject', () => {
+    const std = {
+      key: 'school',
+      type: 'choice',
+      valueModel: 'optionSet',
+      optionSetId: 'm1',
+    }
+    const field = {
+      key: 'school',
+      type: 'choice',
+      optionSetId: 'm1',
+      label: '校',
+      required: false,
+      order: 0,
+    }
+    assert.equal(assertFieldMatchesStandard(field, std, 'dept'), 'code 必須等於 KEY')
+    assert.equal(assertFieldMatchesStandard(field, std, 'school'), null)
+  })
+
+  it('H：同 code 已有標準時不出現在未升格選項池', () => {
+    assert.deepEqual(optionSetCodesWithoutStandard(['school', 'dept'], [{ key: 'school' }]), [
+      'dept',
+    ])
+  })
+})

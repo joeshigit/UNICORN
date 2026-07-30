@@ -156,6 +156,12 @@ before(async () => {
       fields: [],
     })
     await setDoc(doc(d, `userRoles/${MANAGER}`), { groups: ['SCD Manager'] })
+    await setDoc(doc(d, 'standardKeys/sk_seed'), {
+      key: 'emerContact',
+      type: 'text',
+      valueModel: 'free',
+      status: 'active',
+    })
   })
 })
 
@@ -361,6 +367,19 @@ describe('模板、選項池與權限', () => {
 
   it('一般使用者不能改選項池', () =>
     assertDenied(() => setDoc(doc(fs(ATTACKER), 'optionSets/x'), { code: 'school' })))
+
+  it('一般使用者不能寫標準資料', () =>
+    assertDenied(() =>
+      setDoc(doc(fs(ATTACKER), 'standardKeys/hack'), {
+        key: 'x',
+        type: 'text',
+        valueModel: 'free',
+        status: 'active',
+      })
+    ))
+
+  it('任何人不能刪標準資料', () =>
+    assertDenied(() => deleteDoc(doc(fs(SUPER), 'standardKeys/sk_seed'))))
 
   it('一般使用者不能改別人的 userRoles', () =>
     assertDenied(() =>

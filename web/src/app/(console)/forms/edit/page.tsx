@@ -6,7 +6,14 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowDown, ArrowLeft, ArrowUp, Plus, Trash2 } from 'lucide-react'
 import { SuperuserGuard, useAuth } from '@/components/auth'
 import { ErrorBanner, PageHeader, Spinner } from '@/components/ui'
-import { createTemplate, findLegacyDateKeyUsage, getTemplate, listOptionSets, updateTemplate } from '@/lib/db'
+import {
+  createTemplate,
+  findLegacyDateKeyUsage,
+  getTemplate,
+  listOptionSets,
+  listStandardKeys,
+  updateTemplate,
+} from '@/lib/db'
 import {
   ACTION_CODE,
   FIXED_KEYS,
@@ -15,14 +22,20 @@ import {
   MODULE_CODE,
   SCALE_DIRECTION_HINT,
   SCALE_POINTS_OPTIONS,
+  activeStandardsForPicker,
+  applyStandardToField,
+  assertFieldMatchesStandard,
   canPresetFieldType,
   expandScaleMatrixFields,
+  findStandardByKey,
   isPresetEmpty,
   isValidScalePoints,
-  scaleOptions,
+  optionSetCodesWithoutStandard,
+  resolveScaleValueLabels,
   shouldWarnOnPreset,
   usesOptionSet,
   validateFieldMode,
+  validateScaleValueLabels,
 } from '@/lib/keys'
 import type {
   FieldDefinition,
@@ -31,6 +44,7 @@ import type {
   OptionItem,
   OptionSet,
   ScalePoints,
+  StandardKey,
   Template,
 } from '@/types'
 
@@ -100,8 +114,7 @@ function PresetValueInput({
   }
 
   if (field.type === 'scale') {
-    const points = isValidScalePoints(field.scalePoints) ? field.scalePoints : 5
-    const items = scaleOptions(points)
+    const items = resolveScaleValueLabels(field)
     return (
       <select
         className="field"
@@ -160,6 +173,7 @@ function FormBuilder() {
   const sourceId = editId || copyId
 
   const [optionSets, setOptionSets] = useState<OptionSet[]>([])
+  const [standardKeys, setStandardKeys] = useState<StandardKey[]>([])
   const [source, setSource] = useState<Template | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -182,8 +196,9 @@ function FormBuilder() {
   useEffect(() => {
     const boot = async () => {
       try {
-        const sets = await listOptionSets()
+        const [sets, standards] = await Promise.all([listOptionSets(), listStandardKeys()])
         setOptionSets(sets)
+        setStandardKeys(standards)
 
         if (sourceId) {
           const template = await getTemplate(sourceId)
@@ -228,16 +243,32 @@ function FormBuilder() {
     [masterSets]
   )
 
-  // dropdown／choice 的 KEY 就是選項池的 code，module/action 等系統保留字不給當一般欄位
+  const pickerStandards = useMemo(() => activeStandardsForPicker(standardKeys), [standardKeys])
+
+  // 未升格為標準的 optionSet code（避免與標準資料雙入口）
   const optionSetKeys: KeyChoice[] = useMemo(() => {
     const seen = new Set<string>()
-    return masterSets
+    const masters = masterSets
       .filter(os => os.code !== MODULE_CODE && os.code !== ACTION_CODE && os.code !== MANAGER_GROUP_CODE)
       .filter(os => (seen.has(os.code) ? false : (seen.add(os.code), true)))
+    const allowed = new Set(
+      optionSetCodesWithoutStandard(
+        masters.map(m => m.code),
+        standardKeys
+      )
+    )
+    return masters
+      .filter(os => allowed.has(os.code))
       .map(os => ({ key: os.code, type: 'dropdown' as const, label: os.name }))
-  }, [masterSets])
+  }, [masterSets, standardKeys])
 
   const usedKeys = new Set(fields.map(f => f.key))
+
+  const standardByKey = useMemo(() => {
+    const map = new Map<string, StandardKey>()
+    for (const s of standardKeys) map.set(s.key, s)
+    return map
+  }, [standardKeys])
 
   const addField = () =>
     setFields(prev => [
@@ -265,46 +296,79 @@ function FormBuilder() {
     setFields(prev =>
       prev.map((field, i) => {
         if (i !== index) return field
-        const next = { ...field, ...patch }
+
+        const bound = findStandardByKey(standardKeys, field.key)
+
+        // 已綁標準（含 deprecated）：忽略契約相關 patch；optionSet 僅允許同 code 子集
+        if (bound && patch.key === undefined) {
+          const locked: Partial<FieldDefinition> = { ...patch }
+          delete locked.type
+          delete locked.scalePoints
+          delete locked.scaleValueLabels
+          if (locked.optionSetId !== undefined) {
+            const set = optionSets.find(os => os.id === locked.optionSetId)
+            if (!set || set.code !== field.key) delete locked.optionSetId
+          }
+          const next = { ...field, ...locked }
+          if (locked.optionSetId !== undefined || locked.multiple !== undefined) {
+            next.presetValue = undefined
+          }
+          return next
+        }
+
+        let next = { ...field, ...patch }
         if (patch.key !== undefined) {
-          const fixed = FIXED_KEYS[patch.key]
-          if (fixed) {
-            next.type = fixed.type
+          const standard = findStandardByKey(standardKeys, patch.key)
+          if (standard) {
+            next = applyStandardToField(field, standard)
+          } else {
+            const fixed = FIXED_KEYS[patch.key]
+            if (fixed) {
+              next.type = fixed.type
+              next.optionSetId = undefined
+              next.multiple = undefined
+              next.scaleValueLabels = undefined
+              if (fixed.type === 'scale') {
+                next.scalePoints = isValidScalePoints(next.scalePoints) ? next.scalePoints : 5
+              } else {
+                next.scalePoints = undefined
+              }
+            } else {
+              next.type = field.type === 'choice' ? 'choice' : 'dropdown'
+              next.optionSetId = optionSets.find(os => os.code === patch.key && os.isMaster)?.id
+              next.scalePoints = undefined
+              next.scaleValueLabels = undefined
+            }
+            if (!next.label.trim()) {
+              next.label = fixed?.label || optionSets.find(os => os.code === patch.key)?.name || ''
+            }
+            next.presetValue = undefined
+            if (!canPresetFieldType(next.type)) next.inputMode = undefined
+          }
+        }
+
+        // 非標準欄位才允許改 type／刻度
+        if (!findStandardByKey(standardKeys, next.key)) {
+          if (patch.type === 'scale') {
             next.optionSetId = undefined
             next.multiple = undefined
-            if (fixed.type === 'scale') {
-              next.scalePoints = isValidScalePoints(next.scalePoints) ? next.scalePoints : 5
-            } else {
-              next.scalePoints = undefined
-            }
-          } else {
-            // 選項池 KEY：預設下拉；若本來就是 choice 則保留
-            next.type = field.type === 'choice' ? 'choice' : 'dropdown'
-            next.optionSetId = optionSets.find(os => os.code === patch.key && os.isMaster)?.id
+            next.scaleValueLabels = undefined
+            next.scalePoints = isValidScalePoints(next.scalePoints) ? next.scalePoints : 5
+          }
+          if (patch.type === 'choice' || patch.type === 'dropdown') {
             next.scalePoints = undefined
+            next.scaleValueLabels = undefined
+            if (!next.optionSetId && next.key) {
+              next.optionSetId = optionSets.find(os => os.code === next.key && os.isMaster)?.id
+            }
           }
-          if (!next.label.trim()) {
-            next.label = fixed?.label || optionSets.find(os => os.code === patch.key)?.name || ''
+          if (
+            patch.optionSetId !== undefined ||
+            patch.multiple !== undefined ||
+            patch.scalePoints !== undefined
+          ) {
+            next.presetValue = undefined
           }
-          // 換 KEY 一定要清掉預填值，否則會殘留上一個選項池的值，
-          // 寫出不存在於新選項池的 VALUE
-          next.presetValue = undefined
-          if (!canPresetFieldType(next.type)) next.inputMode = undefined
-        }
-        if (patch.type === 'scale') {
-          next.optionSetId = undefined
-          next.multiple = undefined
-          next.scalePoints = isValidScalePoints(next.scalePoints) ? next.scalePoints : 5
-        }
-        if (patch.type === 'choice' || patch.type === 'dropdown') {
-          next.scalePoints = undefined
-          if (!next.optionSetId && next.key) {
-            next.optionSetId = optionSets.find(os => os.code === next.key && os.isMaster)?.id
-          }
-        }
-        // 換選項池或切換複選時，舊的預填值同樣可能不再有效
-        if (patch.optionSetId !== undefined || patch.multiple !== undefined || patch.scalePoints !== undefined) {
-          next.presetValue = undefined
         }
         return next
       })
@@ -344,13 +408,30 @@ function FormBuilder() {
     if (findLegacyDateKeyUsage([{ id: 'draft', name, fields } as Template]).length > 0) {
       list.push('請移除已退役的日期 KEY，改用語意化日期／時間 KEY')
     }
-    // 鎖定的欄位使用者救不了設定錯誤，所以這一關非過不可
     for (const field of fields) {
       const problem = validateFieldMode(field)
       if (problem) list.push(problem.message)
+
+      if (usesOptionSet(field.type) && field.optionSetId) {
+        const set = optionSets.find(os => os.id === field.optionSetId)
+        if (set && set.code !== field.key) {
+          list.push(`「${field.label || field.key}」的選項池 code 必須等於 KEY`)
+        }
+      }
+
+      const standard = standardByKey.get(field.key)
+      if (standard) {
+        const set = field.optionSetId ? optionSets.find(os => os.id === field.optionSetId) : null
+        const mismatch = assertFieldMatchesStandard(field, standard, set?.code)
+        if (mismatch) list.push(mismatch)
+        if (standard.valueModel === 'scale') {
+          const labelErr = validateScaleValueLabels(field.scalePoints, field.scaleValueLabels)
+          if (labelErr) list.push(`「${field.label || field.key}」：${labelErr}`)
+        }
+      }
     }
     return list
-  }, [name, moduleId, actionId, fields, fillAccessType, fillGroups])
+  }, [name, moduleId, actionId, fields, fillAccessType, fillGroups, optionSets, standardByKey])
 
   // 非阻擋的提醒
   const warnings = useMemo(() => {
@@ -646,10 +727,20 @@ function FormBuilder() {
 
           {fields.map((field, index) => {
             const relevantSets = optionSets.filter(os => os.code === field.key)
+            const boundStandard = standardByKey.get(field.key)
+            const contractLocked = !!boundStandard
             return (
               <div key={index} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-unicorn-600">欄位 {index + 1}</span>
+                  <span className="text-xs font-semibold text-unicorn-600">
+                    欄位 {index + 1}
+                    {boundStandard && (
+                      <span className="ml-2 font-normal text-slate-500">
+                        · 標準資料
+                        {boundStandard.status === 'deprecated' ? '（已停用，仍可編輯此表）' : ''}
+                      </span>
+                    )}
+                  </span>
                   <div className="flex gap-1">
                     <button
                       className="btn-ghost btn-sm"
@@ -680,6 +771,24 @@ function FormBuilder() {
                       onChange={e => updateField(index, { key: e.target.value })}
                     >
                       <option value="">選一個 KEY…</option>
+                      <optgroup label="標準資料">
+                        {pickerStandards.map(s => (
+                          <option
+                            key={s.id || s.key}
+                            value={s.key}
+                            disabled={usedKeys.has(s.key) && s.key !== field.key}
+                          >
+                            {s.key} — {s.defaultLabel}
+                          </option>
+                        ))}
+                        {boundStandard &&
+                          boundStandard.status === 'deprecated' &&
+                          !pickerStandards.some(s => s.key === boundStandard.key) && (
+                            <option value={boundStandard.key}>
+                              {boundStandard.key} — {boundStandard.defaultLabel}（已停用）
+                            </option>
+                          )}
+                      </optgroup>
                       {FIXED_KEY_GROUPS.map(group => (
                         <optgroup key={group} label={group}>
                           {Object.entries(FIXED_KEYS)
@@ -695,7 +804,7 @@ function FormBuilder() {
                             ))}
                         </optgroup>
                       ))}
-                      <optgroup label="選項池（下拉／選擇題）">
+                      <optgroup label="選項池（本表／未升格）">
                         {optionSetKeys.map(choice => (
                           <option
                             key={choice.key}
@@ -727,16 +836,18 @@ function FormBuilder() {
                       <select
                         className="field"
                         value={field.type}
+                        disabled={contractLocked}
                         onChange={e =>
                           updateField(index, {
                             type: e.target.value as 'dropdown' | 'choice',
-                            multiple: e.target.value === 'dropdown' ? field.multiple : field.multiple,
+                            multiple: field.multiple,
                           })
                         }
                       >
                         <option value="dropdown">下拉選單</option>
                         <option value="choice">選擇題（圓鈕／方框）</option>
                       </select>
+                      {contractLocked && <p className="hint mt-1">由標準資料鎖定</p>}
                     </div>
                     <div>
                       <label className="label mb-1 text-xs">用哪個選項清單</label>
@@ -752,6 +863,7 @@ function FormBuilder() {
                           </option>
                         ))}
                       </select>
+                      {contractLocked && <p className="hint mt-1">僅能選同一 KEY 的完整清單或子集</p>}
                     </div>
                     <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm sm:col-span-2">
                       <input
@@ -772,6 +884,7 @@ function FormBuilder() {
                       <select
                         className="field"
                         value={field.scalePoints || 5}
+                        disabled={contractLocked}
                         onChange={e =>
                           updateField(index, { scalePoints: Number(e.target.value) as ScalePoints })
                         }
@@ -782,7 +895,13 @@ function FormBuilder() {
                           </option>
                         ))}
                       </select>
-                      <p className="hint mt-1">{SCALE_DIRECTION_HINT}</p>
+                      <p className="hint mt-1">
+                        {contractLocked
+                          ? `由標準資料鎖定：${resolveScaleValueLabels(field)
+                              .map(l => `${l.value}=${l.label}`)
+                              .join('／')}`
+                          : SCALE_DIRECTION_HINT}
+                      </p>
                     </div>
                   </div>
                 )}

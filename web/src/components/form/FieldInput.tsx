@@ -3,7 +3,7 @@
 import { DateTimePicker } from './DateTimePicker'
 import { FileUploader } from './FileUploader'
 import type { Actor } from '@/lib/db'
-import { isValidScalePoints, scaleOptions } from '@/lib/keys'
+import { resolveScaleValueLabels } from '@/lib/keys'
 import type { FieldDefinition, FileInfo, OptionItem } from '@/types'
 
 interface FieldInputProps {
@@ -189,8 +189,7 @@ export function FieldInput({
     }
 
     case 'scale': {
-      const points = isValidScalePoints(field.scalePoints) ? field.scalePoints : 5
-      const items = scaleOptions(points)
+      const items = resolveScaleValueLabels(field)
       const single = Array.isArray(value) ? (value[0] ?? '') : ((value as string) || '')
       return (
         <div className="space-y-2">
