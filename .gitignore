@@ -28,6 +28,12 @@ ui-debug.log
 **/service-account*.json
 **/*-service-account*.json
 **/serviceAccount*.json
+**/serviceAccountKey*.json
+# Firebase Console 下載的金鑰長這樣：<專案>-firebase-adminsdk-<xxxxx>-<hash>.json
+**/*firebase-adminsdk*.json
+**/*-adminsdk-*.json
+**/*.pem
+**/*.p12
 
 # IDE
 .idea/
