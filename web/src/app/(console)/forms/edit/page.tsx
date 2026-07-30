@@ -618,7 +618,7 @@ function FormBuilder() {
             {fillAccessType === 'groups' && (
               <div className="mt-3 flex flex-wrap gap-4">
                 {managerGroupItems.length === 0 ? (
-                  <div className="text-sm text-amber-700">請先建立 managerGroup 標準選項。</div>
+                  <div className="text-sm text-amber-700">請先到「權限管理」建立管理群組。</div>
                 ) : (
                   managerGroupItems.map(item => (
                     <label
@@ -654,7 +654,7 @@ function FormBuilder() {
             </label>
             {managerGroupItems.length === 0 ? (
               <div className="text-sm text-amber-700 bg-amber-50 rounded-lg p-3 border border-amber-200">
-                尚未建立 <code className="font-mono">{MANAGER_GROUP_CODE}</code> 標準選項，無法設定群組管理員。
+                尚未建立管理群組。請先到「權限管理」建立群組後，再設定此表的管理員。
               </div>
             ) : (
               <div className="flex flex-wrap gap-4">

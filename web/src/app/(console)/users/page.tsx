@@ -3,11 +3,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { collection, getDocs } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
+import { Plus, Trash2 } from 'lucide-react'
 import { SuperuserGuard, useAuth } from '@/components/auth'
 import { EmptyState, ErrorBanner, PageHeader, Spinner } from '@/components/ui'
-import { getUserRole, updateUserGroups, listOptionSets } from '@/lib/db'
+import {
+  ensureCoreOptionSets,
+  listOptionSets,
+  updateOptionSet,
+  updateUserGroups,
+} from '@/lib/db'
 import { MANAGER_GROUP_CODE } from '@/lib/keys'
 import type { OptionSet, UserRole } from '@/types'
+
+type GroupDraft = { value: string; label: string; isNew: boolean }
 
 function UsersPageInner() {
   const { email } = useAuth()
@@ -17,18 +25,43 @@ function UsersPageInner() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [groupsSaving, setGroupsSaving] = useState(false)
+
+  const [groupDrafts, setGroupDrafts] = useState<GroupDraft[]>([])
+  const [newGroupName, setNewGroupName] = useState('')
+  const [groupsDirty, setGroupsDirty] = useState(false)
 
   const [editingEmail, setEditingEmail] = useState('')
   const [editingGroups, setEditingGroups] = useState<string[]>([])
 
+  const managerMaster = useMemo(
+    () => optionSets.find(os => os.code === MANAGER_GROUP_CODE && os.isMaster),
+    [optionSets]
+  )
+
+  const managerGroupItems = useMemo(() => managerMaster?.items || [], [managerMaster])
+
+  const syncGroupDrafts = (master: OptionSet | undefined) => {
+    setGroupDrafts(
+      (master?.items || []).map(item => ({
+        value: item.value,
+        label: item.label,
+        isNew: false,
+      }))
+    )
+    setGroupsDirty(false)
+  }
+
   const load = async () => {
     setLoading(true)
     try {
+      await ensureCoreOptionSets(email)
       const [sets, rolesSnap] = await Promise.all([
         listOptionSets(),
-        getDocs(collection(db, 'userRoles'))
+        getDocs(collection(db, 'userRoles')),
       ])
       setOptionSets(sets)
+      syncGroupDrafts(sets.find(os => os.code === MANAGER_GROUP_CODE && os.isMaster))
       setRoles(rolesSnap.docs.map(d => ({ email: d.id, ...d.data() } as UserRole)))
       setError('')
     } catch (err) {
@@ -39,13 +72,68 @@ function UsersPageInner() {
   }
 
   useEffect(() => {
-    load()
-  }, [])
+    if (email) load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [email])
 
-  const managerGroupItems = useMemo(() => {
-    const master = optionSets.find(os => os.code === MANAGER_GROUP_CODE && os.isMaster)
-    return master?.items || []
-  }, [optionSets])
+  const handleAddGroup = () => {
+    const name = newGroupName.trim()
+    if (!name) return
+    if (groupDrafts.some(g => g.value === name)) {
+      setError('這個群組名稱已經存在')
+      return
+    }
+    setGroupDrafts(prev => [...prev, { value: name, label: name, isNew: true }])
+    setNewGroupName('')
+    setGroupsDirty(true)
+    setError('')
+  }
+
+  const handleRemoveGroup = (index: number) => {
+    const item = groupDrafts[index]
+    if (!item.isNew) {
+      if (
+        !confirm(
+          `確定移除「${item.label}」？\n\n若仍被表單或使用者引用，相關設定可能失效。`
+        )
+      ) {
+        return
+      }
+    }
+    setGroupDrafts(prev => prev.filter((_, i) => i !== index))
+    setGroupsDirty(true)
+  }
+
+  const handleSaveGroups = async () => {
+    if (!managerMaster?.id) return
+    const trimmed = groupDrafts.map(g => ({
+      value: g.value.trim(),
+      label: g.label.trim() || g.value.trim(),
+    }))
+    if (trimmed.some(g => !g.label)) {
+      setError('群組名稱不能空白')
+      return
+    }
+    const values = trimmed.map(g => g.value)
+    if (new Set(values).size !== values.length) {
+      setError('群組名稱不能重複')
+      return
+    }
+    setGroupsSaving(true)
+    setError('')
+    try {
+      await updateOptionSet(managerMaster.id, {
+        name: managerMaster.name,
+        description: managerMaster.description || '',
+        items: trimmed.map(g => ({ value: g.value, label: g.label, status: 'active' as const })),
+      })
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '儲存群組失敗')
+    } finally {
+      setGroupsSaving(false)
+    }
+  }
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -56,9 +144,10 @@ function UsersPageInner() {
       await updateUserGroups(editingEmail.trim(), editingGroups, email)
       setEditingEmail('')
       setEditingGroups([])
-      load()
+      await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : '儲存失敗')
+    } finally {
       setSaving(false)
     }
   }
@@ -83,6 +172,89 @@ function UsersPageInner() {
 
       {error && <ErrorBanner message={error} />}
 
+      <section className="card mb-6 space-y-4 p-6">
+        <div>
+          <h2 className="font-semibold">管理群組</h2>
+          <p className="hint mt-1">
+            定義組織內可指派的管理／填報群組。建表時會從這份清單勾選誰能管、誰能填。
+          </p>
+        </div>
+
+        {loading ? (
+          <Spinner label="載入群組" />
+        ) : (
+          <>
+            {groupDrafts.length === 0 ? (
+              <p className="text-sm text-slate-500">尚未建立任何管理群組。</p>
+            ) : (
+              <ul className="space-y-2">
+                {groupDrafts.map((group, index) => (
+                  <li key={group.value} className="flex flex-wrap items-center gap-2">
+                    <input
+                      className="field max-w-xs flex-1"
+                      value={group.label}
+                      onChange={e => {
+                        const label = e.target.value
+                        setGroupDrafts(prev =>
+                          prev.map((g, i) => (i === index ? { ...g, label } : g))
+                        )
+                        setGroupsDirty(true)
+                      }}
+                      placeholder="群組名稱"
+                    />
+                    {!group.isNew && (
+                      <span className="font-mono text-xs text-slate-400">{group.value}</span>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-ghost btn-sm text-red-500"
+                      onClick={() => handleRemoveGroup(index)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="flex flex-wrap items-end gap-2 border-t border-slate-100 pt-4">
+              <div className="min-w-[12rem] flex-1">
+                <label className="label mb-1">新增群組</label>
+                <input
+                  className="field"
+                  value={newGroupName}
+                  onChange={e => setNewGroupName(e.target.value)}
+                  placeholder="例如：SCD 主管"
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleAddGroup()
+                    }
+                  }}
+                />
+              </div>
+              <button type="button" className="btn-secondary" onClick={handleAddGroup}>
+                <Plus className="h-4 w-4" />
+                加入
+              </button>
+              {groupsDirty && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleSaveGroups}
+                  disabled={groupsSaving}
+                >
+                  {groupsSaving ? '儲存中…' : '儲存群組'}
+                </button>
+              )}
+            </div>
+            <p className="hint text-xs">
+              已建立的群組代號（灰色小字）請勿隨意改動；要改顯示名稱請編輯左側欄位後按「儲存群組」。
+            </p>
+          </>
+        )}
+      </section>
+
       <form onSubmit={handleSave} className="card p-6 mb-6 space-y-4">
         <h2 className="font-semibold">{editingEmail ? '編輯使用者群組' : '新增使用者群組'}</h2>
         
@@ -100,8 +272,8 @@ function UsersPageInner() {
         <div>
           <label className="label mb-2">指派群組</label>
           {managerGroupItems.length === 0 ? (
-            <div className="text-sm text-amber-700 bg-amber-50 rounded-lg p-3 border border-amber-200">
-              尚未建立 <code className="font-mono">{MANAGER_GROUP_CODE}</code> 標準選項。請先到「標準選項」建立並新增群組名稱。
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+              請先在上方「管理群組」建立至少一個群組。
             </div>
           ) : (
             <div className="flex flex-wrap gap-4">

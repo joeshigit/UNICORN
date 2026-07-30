@@ -73,6 +73,7 @@ function OptionsPageInner() {
     const byCode = new Map<string, OptionSet[]>()
     for (const set of sets) byCode.set(set.code, [...(byCode.get(set.code) || []), set])
     return Array.from(byCode.entries())
+      .filter(([code]) => code !== MANAGER_GROUP_CODE)
       .map(([code, list]) => ({
         code,
         master: list.find(s => s.isMaster) || null,
@@ -174,7 +175,7 @@ function OptionsPageInner() {
                 <strong>不要</strong>刪除仍被表單使用的清單；刪除前系統會檢查，且必須手動輸入密碼 {DELETE_CONFIRM_PASSWORD}。
               </li>
               <li>
-                <strong>{MODULE_CODE}</strong>、<strong>{ACTION_CODE}</strong>、管理群組（{MANAGER_GROUP_CODE}）是系統內建代號，<strong>不能刪除或改代號</strong>，但選項內容仍可編輯。
+                <strong>{MODULE_CODE}</strong>、<strong>{ACTION_CODE}</strong> 是系統內建代號，<strong>不能刪除或改代號</strong>，但選項內容仍可編輯。管理群組請到「權限管理」維護。
               </li>
               <li>
                 <strong>應</strong>用 Master 完整清單登錄全部標準值；子集只從 Master 挑選，填報結果才會一致。

@@ -7,6 +7,7 @@ import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
 import { SuperuserGuard, useAuth } from '@/components/auth'
 import { ErrorBanner, PageHeader, Spinner } from '@/components/ui'
 import { createSubset, getOptionSet, updateOptionSet } from '@/lib/db'
+import { MANAGER_GROUP_CODE } from '@/lib/keys'
 import { parseOptionLines } from '@/lib/csv'
 import type { OptionItem, OptionSet } from '@/types'
 
@@ -141,6 +142,28 @@ function OptionSetEditor() {
   }
 
   if (loading) return <Spinner label="載入中" />
+
+  if (optionSet?.code === MANAGER_GROUP_CODE || master?.code === MANAGER_GROUP_CODE) {
+    return (
+      <>
+        <Link href="/users" className="btn-ghost btn-sm mb-4 -ml-3">
+          <ArrowLeft className="h-4 w-4" />
+          回權限管理
+        </Link>
+        <PageHeader
+          title="管理群組"
+          description="管理群組在「權限管理」頁面維護，不在標準選項。"
+        />
+        <div className="card p-6 text-sm text-slate-600">
+          請到{' '}
+          <Link href="/users" className="font-medium text-brand-700 underline">
+            權限管理
+          </Link>{' '}
+          新增或編輯管理群組。
+        </div>
+      </>
+    )
+  }
 
   return (
     <>
