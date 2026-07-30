@@ -31,7 +31,7 @@
 | 層 | Collection | 性質 |
 |----|-----------|------|
 | **Meaning** | `optionSets` | 字典。離散 VALUE 清單（code＝Universal KEY） |
-| **Meaning** | `standardKeys` | 組織標準 KEY＋答案契約（free／optionSet／scale／yesNo） |
+| **Meaning** | `standardKeys` | 組織標準 KEY＋答案方式 valueModel（free／optionSet／scale／yesNo） |
 | **Template** | `templates` | 表格定義（含填報／管理 ACL） |
 | **Submission** | `submissions` | 不可變事件，單一資料池 |
 | **Staging** | `uploadSessions` | 送出前檔案暫存擁有權（非業務真相） |
@@ -255,10 +255,13 @@ orderBy('_submittedAt', 'desc')
 
 | 題型 | 本質 | 答案從哪來 | KEY |
 |------|------|------------|-----|
-| `dropdown` | 下拉 | optionSet | ＝ optionSet.code |
-| `choice` | 圓鈕／方框（資料同下拉） | optionSet | ＝ optionSet.code |
+| `dropdown` | 下拉 | optionSet（選項池 items） | ＝ optionSet.code |
+| `choice` | 圓鈕／方框（資料同下拉） | optionSet **或** 標準問題 yesNo 答案方式 | ＝ optionSet.code；yesNo 標準題見 §8b |
 | `scale` | 線性刻度（輸入方式，像 date） | 系統固定 `"1"`…`"N"` | `rating1`…`rating20` |
 
+- **`choice` 有兩種答案來源，不要混為一談：**
+  - **optionSet**：離散選項清單（學校、部門…）→ 在「標準選項」建 Master
+  - **yesNo（標準問題）**：組織固定 `是`／`否`／（可選）`不適用` → 在「標準問題」登記，**不需** optionSet
 - `scalePoints`：`3 | 4 | 5 | 10 | 100`；**數字愈大愈正面**
 - 量表**不是** optionSet，也不用 likert code 當欄位 KEY
 - 矩陣建題＝建表批次產生多個扁平 `scale` 欄位，共用同一 `scalePoints`；submission **沒有**巢狀 matrix
@@ -269,16 +272,18 @@ orderBy('_submittedAt', 'desc')
 
 ## 8b. 標準資料（standardKeys）
 
-組織認定可跨表重用的資料概念：規定 **KEY** 與 **答案格式**；不是題幹貼上庫，也不自動建立 Firestore 索引。
+組織認定可跨表重用的資料概念：規定 **KEY** 與 **答案方式（valueModel）**；不是題幹貼上庫，也不自動建立 Firestore 索引。
 
 **KEY 命名与 `optionSet.code` 共用同一套 canonical format；登记到 `standardKeys` 才代表组织标准**（见 §0）。
 
-| valueModel | 例子 | 契約 |
+**yesNo 不是 optionSet 的子功能。** 它是標準問題專用的答案方式：VALUE 組織級固定，無 items 清單，無 Master/子集，也**不要**為每題在「標準選項」複製一個「是/否」Master。
+
+| valueModel（答案方式） | 例子 | 契約 |
 |------------|------|------|
 | `free` | `demo_chineseName` | text／number／date… 自由值 |
 | `optionSet` | 既有 `school` | KEY＝optionSet.code（MVP）；可選同 code 子集 |
 | `scale` | `prog_satisfactionRating` | `scalePoints`＋`scaleValueLabels`（VALUE 必須 `"1"…"N"`） |
-| `yesNo` | `coun_riskSelfHarm` | `type: choice`；固定 VALUE `是`／`否`（或含 `不適用`）；`allowNa` 決定二元或三元；**不需** optionSet Master |
+| `yesNo` | `coun_riskSelfHarm` | `type: choice`；固定 VALUE `是`／`否`（或含 `不適用`）；`allowNa` 決定二元或三元 |
 
 - Active 答案契約 **immutable**；語義變更 → deprecate＋新 KEY  
 - 建表時 scale 標籤 **snapshot** 進 `FieldDefinition.scaleValueLabels`；yesNo 的 `allowNa` **snapshot** 進 `FieldDefinition.yesNoAllowNa`；填表不 live join 名冊  

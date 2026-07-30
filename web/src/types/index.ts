@@ -61,14 +61,15 @@ export interface FieldDefinition {
   yesNoAllowNa?: boolean
 }
 
-/** 標準資料的答案語義模型 */
+/** 標準問題的答案方式（valueModel）；與 optionSet 選項池無父子關係 */
 export type StandardValueModel = 'free' | 'optionSet' | 'scale' | 'yesNo'
 
 export type StandardKeyStatus = 'active' | 'deprecated'
 
 /**
- * Meaning：組織標準 KEY＋答案契約（獨立於 optionSets）。
- * optionSet 型：MVP 要求 key === optionSet.code。
+ * Meaning：組織標準 KEY＋答案方式（valueModel，獨立於 optionSets）。
+ * - optionSet 型：MVP 要求 key === optionSet.code，答案來自選項池 items
+ * - yesNo 型：答案固定 是/否/(不適用)，不需、也不應建立 optionSet Master
  */
 export interface StandardKey {
   id?: string

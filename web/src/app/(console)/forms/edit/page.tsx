@@ -859,7 +859,7 @@ function FormBuilder() {
 
                 {isYesNoField(field) && (
                   <p className="hint rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                    是/否（{field.yesNoAllowNa ? '是／否／不適用' : '是／否'}）— 由標準問題鎖定
+                    答案方式：是/否（{field.yesNoAllowNa ? '含不適用' : '二元'}）— 由標準問題鎖定，不使用標準選項
                   </p>
                 )}
 

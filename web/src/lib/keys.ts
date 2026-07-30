@@ -3,7 +3,8 @@
 //
 // KEY   = 系統統一的欄位名稱，跨所有表格相同（school、quantity1…）
 // LABEL = UI 顯示名稱，建表時自由設計（「入營學校」「駐守學校」…）
-// VALUE = 標準化的值，dropdown 一律來自 optionSet
+// VALUE = 標準化的值：dropdown/choice 通常來自 optionSet；
+//         標準問題若 valueModel=yesNo 則固定 是/否/不適用（不需 optionSet）
 //
 // KEY 有兩個來源：
 //   1. FIXED_KEYS       — 這裡寫死的通用欄位
@@ -347,7 +348,7 @@ export function applyStandardToField(
   return next
 }
 
-/** dropdown／choice 都用 optionSet；scale 用系統刻度 */
+/** dropdown／choice 若綁 optionSet 才用選項池；yesNo 標準題不走 optionSet */
 export function usesOptionSet(type: FieldType): boolean {
   return type === 'dropdown' || type === 'choice'
 }

@@ -250,10 +250,11 @@ function StandardsPageInner() {
           <p className="text-sm text-slate-600">
             登記到標準問題＝組織認定的標準概念；KEY 命名規則與標準選項相同（例：{' '}
             <code className="font-mono">demo_chineseName</code>）。前綴不代表已是標準問題。
+            「是/否」是此處的答案方式，<strong>不是</strong>標準選項（optionSet）的子功能。
           </p>
 
           <div>
-            <label className="label mb-1">答案模型</label>
+            <label className="label mb-1">答案方式</label>
             <select
               className="field"
               value={mode}
@@ -264,10 +265,15 @@ function StandardsPageInner() {
               }}
             >
               <option value="free">自由填寫（文字／數字／日期…）</option>
-              <option value="optionSet">標準選項（KEY＝Master code）</option>
+              <option value="optionSet">標準選項（KEY＝Master code，需先在「標準選項」建池）</option>
               <option value="scale">量表（固定 1…N 標籤）</option>
-              <option value="yesNo">是/否（標準）</option>
+              <option value="yesNo">是/否（答案方式，不需標準選項）</option>
             </select>
+            {mode === 'yesNo' && (
+              <p className="hint mt-1">
+                組織固定 VALUE：是／否（可選含不適用）。不必、也不應到「標準選項」建立是/否 Master。
+              </p>
+            )}
           </div>
 
           {mode === 'free' && (
@@ -540,12 +546,12 @@ function StandardRow({
       </div>
 
       <p className="hint">
-        答案契約已鎖定
+        答案方式已鎖定
         {row.valueModel === 'optionSet' && ` · optionSetId=${row.optionSetId}`}
         {row.valueModel === 'scale' &&
           ` · ${row.scalePoints} 點：${(row.scaleValueLabels || []).map(l => l.label).join('／')}`}
         {row.valueModel === 'yesNo' &&
-          ` · ${row.allowNa ? '是/否/不適用' : '是/否'}`}
+          ` · ${row.allowNa ? '是/否/不適用' : '是/否'}（非 optionSet）`}
         {row.valueModel === 'free' && ' · 自由填寫'}
       </p>
 
