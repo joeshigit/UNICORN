@@ -204,7 +204,7 @@ function StandardsPageInner() {
     <>
       <PageHeader
         title="標準問題"
-        description="標準問題是組織認定可跨表重用的資料概念。它規定 KEY 及答案格式；一次性問題仍可在表單中使用本表專用欄位。"
+        description="這裡登記組織認定、多張表格都會重用的問題。每題會統一欄位名稱與填答方式；只在某一張表才用的題目，仍可在該表單另外加專用欄位。"
         actions={
           <button
             className="btn-primary"
@@ -214,7 +214,7 @@ function StandardsPageInner() {
             }}
           >
             <Plus className="h-4 w-4" />
-            新增標準 KEY
+            新增標準問題
           </button>
         }
       />
@@ -223,7 +223,7 @@ function StandardsPageInner() {
 
       {creating && (
         <div className="card mb-5 space-y-4 p-6">
-          <h2 className="font-semibold">新增標準 KEY</h2>
+          <h2 className="font-semibold">新增標準問題</h2>
 
           <div>
             <label className="label mb-1">答案模型</label>
@@ -408,7 +408,7 @@ function StandardsPageInner() {
       {loading ? (
         <Spinner label="載入中" />
       ) : rows.length === 0 ? (
-        <EmptyState title="還沒有標準問題" description="先新增幾個跨表會重用的 KEY。" />
+        <EmptyState title="沒有標準問題" />
       ) : (
         <div className="space-y-4">
           {rows.map(row => (
