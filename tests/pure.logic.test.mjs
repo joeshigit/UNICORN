@@ -1200,3 +1200,48 @@ describe('Universal KEY naming L2 policy (mirrors keys.ts)', () => {
     assert.equal(validateOptionSetCodeMirror('module'), 'format')
   })
 })
+
+// Mirrors formBuilder.ts isExcludedFromQuestionPool
+const POOL_EXCLUDED_KEYS = new Set([
+  ...Array.from({ length: 20 }, (_, i) => `rating${i + 1}`),
+  'title',
+  'text1',
+  'text2',
+  'text3',
+  'text4',
+  'note',
+  'note2',
+  'note3',
+  'quantity1',
+  'quantity2',
+  'quantity3',
+  'quantity4',
+  'quantity5',
+  'amount1',
+  'amount2',
+  'amount3',
+  'upload2',
+  'upload3',
+  'upload4',
+])
+
+function isExcludedFromQuestionPool(key) {
+  return POOL_EXCLUDED_KEYS.has(key)
+}
+
+describe('UNICORN 題庫 pool exclusions', () => {
+  it('omits rating slots and numbered text/number/file placeholders', () => {
+    assert.equal(isExcludedFromQuestionPool('rating5'), true)
+    assert.equal(isExcludedFromQuestionPool('text1'), true)
+    assert.equal(isExcludedFromQuestionPool('note2'), true)
+    assert.equal(isExcludedFromQuestionPool('quantity3'), true)
+    assert.equal(isExcludedFromQuestionPool('upload2'), true)
+  })
+
+  it('keeps semantic fixed keys and meaningful standard keys', () => {
+    assert.equal(isExcludedFromQuestionPool('startDate'), false)
+    assert.equal(isExcludedFromQuestionPool('documentDate'), false)
+    assert.equal(isExcludedFromQuestionPool('upload'), false)
+    assert.equal(isExcludedFromQuestionPool('score_projectExecution'), false)
+  })
+})

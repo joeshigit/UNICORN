@@ -3,6 +3,7 @@ import {
   FIXED_KEYS,
   MANAGER_GROUP_CODE,
   MODULE_CODE,
+  RATING_KEYS,
   answerFormatLabel,
   applyStandardToField,
   isYesNoField,
@@ -34,6 +35,37 @@ export interface QuestionPoolItem {
 
 const FREQUENT_KEYS = new Set(['school', 'startDate', 'endDate', 'expiryDate', 'upload'])
 
+/**
+ * Numbered FIXED_KEY slots and rating* keys are answer-manner placeholders,
+ * not reusable semantic templates — omit from UNICORN 題庫 (use ＋ menu / 標準問題).
+ */
+const POOL_EXCLUDED_KEYS = new Set<string>([
+  ...RATING_KEYS,
+  'title',
+  'text1',
+  'text2',
+  'text3',
+  'text4',
+  'note',
+  'note2',
+  'note3',
+  'quantity1',
+  'quantity2',
+  'quantity3',
+  'quantity4',
+  'quantity5',
+  'amount1',
+  'amount2',
+  'amount3',
+  'upload2',
+  'upload3',
+  'upload4',
+])
+
+export function isExcludedFromQuestionPool(key: string): boolean {
+  return POOL_EXCLUDED_KEYS.has(key)
+}
+
 export function buildQuestionPool(
   standardKeys: StandardKey[],
   optionSets: OptionSet[]
@@ -43,6 +75,7 @@ export function buildQuestionPool(
 
   for (const s of standardKeys) {
     if (s.status === 'deprecated') continue
+    if (isExcludedFromQuestionPool(s.key)) continue
     const id = `standard:${s.key}`
     if (seen.has(s.key)) continue
     seen.add(s.key)
@@ -67,6 +100,7 @@ export function buildQuestionPool(
 
   for (const [key, meta] of Object.entries(FIXED_KEYS)) {
     if (seen.has(key)) continue
+    if (isExcludedFromQuestionPool(key)) continue
     seen.add(key)
     let groupId: PoolGroupId = 'other'
     if (meta.group === '日期時間') groupId = 'datetime'
