@@ -10,7 +10,7 @@
 //   2. optionSet.code   — 每建一個選項池就多一個 dropdown KEY
 // ============================================
 
-import type { FieldDefinition, FieldType } from '@/types'
+import type { FieldDefinition, FieldType, ScalePoints } from '@/types'
 
 export interface FixedKeyMeta {
   type: FieldType
@@ -58,6 +58,27 @@ export const FIXED_KEYS: Record<string, FixedKeyMeta> = {
   upload2: { type: 'file', label: '檔案上傳 2', group: '檔案' },
   upload3: { type: 'file', label: '檔案上傳 3', group: '檔案' },
   upload4: { type: 'file', label: '檔案上傳 4', group: '檔案' },
+
+  rating1: { type: 'scale', label: '量表 1', group: '量表' },
+  rating2: { type: 'scale', label: '量表 2', group: '量表' },
+  rating3: { type: 'scale', label: '量表 3', group: '量表' },
+  rating4: { type: 'scale', label: '量表 4', group: '量表' },
+  rating5: { type: 'scale', label: '量表 5', group: '量表' },
+  rating6: { type: 'scale', label: '量表 6', group: '量表' },
+  rating7: { type: 'scale', label: '量表 7', group: '量表' },
+  rating8: { type: 'scale', label: '量表 8', group: '量表' },
+  rating9: { type: 'scale', label: '量表 9', group: '量表' },
+  rating10: { type: 'scale', label: '量表 10', group: '量表' },
+  rating11: { type: 'scale', label: '量表 11', group: '量表' },
+  rating12: { type: 'scale', label: '量表 12', group: '量表' },
+  rating13: { type: 'scale', label: '量表 13', group: '量表' },
+  rating14: { type: 'scale', label: '量表 14', group: '量表' },
+  rating15: { type: 'scale', label: '量表 15', group: '量表' },
+  rating16: { type: 'scale', label: '量表 16', group: '量表' },
+  rating17: { type: 'scale', label: '量表 17', group: '量表' },
+  rating18: { type: 'scale', label: '量表 18', group: '量表' },
+  rating19: { type: 'scale', label: '量表 19', group: '量表' },
+  rating20: { type: 'scale', label: '量表 20', group: '量表' },
 }
 
 /** 已移除的舊 KEY；若既有模板仍使用，需手動重建表格後再部署 */
@@ -68,15 +89,103 @@ export const LEGACY_DATE_KEYS = [
   'dateTimeEnd',
 ] as const
 
-export const FIXED_KEY_GROUPS = ['文字', '數字', '日期時間', '檔案'] as const
+export const FIXED_KEY_GROUPS = ['文字', '數字', '日期時間', '檔案', '量表'] as const
+
+export const SCALE_POINTS_OPTIONS: ScalePoints[] = [3, 4, 5, 10, 100]
+
+/** 建表／填表提示：刻度方向全組織一致 */
+export const SCALE_DIRECTION_HINT = '數字愈大愈正面（1＝最負面）'
+
+export const RATING_KEYS = Array.from({ length: 20 }, (_, i) => `rating${i + 1}`)
+
+export function isValidScalePoints(n: unknown): n is ScalePoints {
+  return SCALE_POINTS_OPTIONS.includes(n as ScalePoints)
+}
+
+/** 系統中性刻度選項（value 固定 "1"…"N"） */
+export function scaleOptions(points: ScalePoints): Array<{ value: string; label: string }> {
+  if (points === 3) {
+    return [
+      { value: '1', label: '不喜歡' },
+      { value: '2', label: '普通' },
+      { value: '3', label: '很喜歡' },
+    ]
+  }
+  if (points === 4) {
+    return [
+      { value: '1', label: '非常不同意' },
+      { value: '2', label: '不同意' },
+      { value: '3', label: '同意' },
+      { value: '4', label: '非常同意' },
+    ]
+  }
+  if (points === 5) {
+    return [
+      { value: '1', label: '非常不同意' },
+      { value: '2', label: '不同意' },
+      { value: '3', label: '普通' },
+      { value: '4', label: '同意' },
+      { value: '5', label: '非常同意' },
+    ]
+  }
+  return Array.from({ length: points }, (_, i) => {
+    const value = String(i + 1)
+    return { value, label: value }
+  })
+}
+
+/** dropdown／choice 都用 optionSet；scale 用系統刻度 */
+export function usesOptionSet(type: FieldType): boolean {
+  return type === 'dropdown' || type === 'choice'
+}
+
+/** 送出時寫三形狀（陣列／Combined／Count） */
+export function usesThreeShape(type: FieldType): boolean {
+  return type === 'dropdown' || type === 'choice' || type === 'scale'
+}
+
+/**
+ * 矩陣批次：為多行題目分配尚未使用的 rating KEY。
+ * 空位不足回傳 null（呼叫端應報錯，不靜默截斷）。
+ */
+export function allocateRatingKeys(usedKeys: Iterable<string>, count: number): string[] | null {
+  const used = new Set(usedKeys)
+  const free = RATING_KEYS.filter(k => !used.has(k))
+  if (free.length < count) return null
+  return free.slice(0, count)
+}
+
+export function expandScaleMatrixFields(
+  labels: string[],
+  scalePoints: ScalePoints,
+  usedKeys: Iterable<string>,
+  startOrder: number
+): FieldDefinition[] | { error: string } {
+  const trimmed = labels.map(l => l.trim()).filter(Boolean)
+  if (trimmed.length === 0) return { error: '請至少輸入一列題目' }
+  if (!isValidScalePoints(scalePoints)) return { error: '請選擇有效的量表點數' }
+  const keys = allocateRatingKeys(usedKeys, trimmed.length)
+  if (!keys) {
+    return { error: `量表 KEY 只剩 ${RATING_KEYS.filter(k => !new Set(usedKeys).has(k)).length} 個空位，無法加入 ${trimmed.length} 題` }
+  }
+  return trimmed.map((label, i) => ({
+    key: keys[i],
+    type: 'scale' as const,
+    label,
+    required: false,
+    order: startOrder + i,
+    scalePoints,
+  }))
+}
 
 // ============================================
-// 🦄 下拉欄位的衍生欄位
+// 🦄 選擇題／量表的衍生欄位
 //
-// 每個 dropdown 在送出當下會寫成三個欄位（不管單選還是複選）：
-//   school          ["粵華中學","培正中學"]   陣列 → array-contains 查「有沒有包含」
-//   schoolCombined  "粵華中學, 培正中學"      標準順序的組合字串 → == 查「剛好是這個組合」
-//   schoolCount     2                        數量 → 查「跨了幾個」
+// dropdown／choice／scale 在送出當下會寫成三個欄位：
+//   school          ["粵華中學","培正中學"]   陣列 → array-contains
+//   schoolCombined  "粵華中學, 培正中學"      標準順序組合字串
+//   schoolCount     2                        數量
+// scale 的 VALUE 固定為 "1"…"N"。
 // ============================================
 
 export const COMBINED_SUFFIX = 'Combined'

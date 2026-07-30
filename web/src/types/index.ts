@@ -17,7 +17,12 @@ export type FieldType =
   | 'time'
   | 'datetime'
   | 'dropdown'
+  | 'choice'
+  | 'scale'
   | 'file'
+
+/** 量表刻度點數（輸入方式，不是 optionSet） */
+export type ScalePoints = 3 | 4 | 5 | 10 | 100
 
 /**
  * 輸入方式。與 required（必答／可選答）是兩個正交的維度：
@@ -38,6 +43,8 @@ export interface FieldDefinition {
   helpText?: string
   optionSetId?: string
   multiple?: boolean
+  /** 僅 scale；3／4／5／10／100 */
+  scalePoints?: ScalePoints
   /** 未設定＝open，舊模板天然相容 */
   inputMode?: FieldInputMode
   /** default 必須有；locked 可有可無（可選答時等於鎖定為空白） */

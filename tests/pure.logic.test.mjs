@@ -734,3 +734,107 @@ describe('Browse legExhausted', () => {
     assert.equal(r.hasMore, true)
   })
 })
+
+// ---------- 量表／矩陣（對應 keys.ts）----------
+
+const RATING_KEYS = Array.from({ length: 20 }, (_, i) => `rating${i + 1}`)
+const SCALE_POINTS_OPTIONS = [3, 4, 5, 10, 100]
+
+function allocateRatingKeys(usedKeys, count) {
+  const used = new Set(usedKeys)
+  const free = RATING_KEYS.filter(k => !used.has(k))
+  if (free.length < count) return null
+  return free.slice(0, count)
+}
+
+function expandScaleMatrixFields(labels, scalePoints, usedKeys, startOrder) {
+  const trimmed = labels.map(l => l.trim()).filter(Boolean)
+  if (trimmed.length === 0) return { error: '請至少輸入一列題目' }
+  if (!SCALE_POINTS_OPTIONS.includes(scalePoints)) return { error: '請選擇有效的量表點數' }
+  const keys = allocateRatingKeys(usedKeys, trimmed.length)
+  if (!keys) return { error: '空位不足' }
+  return trimmed.map((label, i) => ({
+    key: keys[i],
+    type: 'scale',
+    label,
+    required: false,
+    order: startOrder + i,
+    scalePoints,
+  }))
+}
+
+function usesThreeShape(type) {
+  return type === 'dropdown' || type === 'choice' || type === 'scale'
+}
+
+function usesOptionSet(type) {
+  return type === 'dropdown' || type === 'choice'
+}
+
+function cleanFieldMirror(f) {
+  const isScale = f.type === 'scale'
+  return {
+    key: f.key,
+    type: f.type,
+    optionSetId: usesOptionSet(f.type) ? f.optionSetId : undefined,
+    multiple: (f.type === 'dropdown' || f.type === 'choice') && f.multiple ? true : undefined,
+    scalePoints: isScale ? f.scalePoints || 5 : undefined,
+  }
+}
+
+function threeShapePayload(raw, order) {
+  const asArray = v => (Array.isArray(v) ? v.map(String) : v ? [String(v)] : [])
+  const wanted = asArray(raw)
+  const picked = order.filter(v => wanted.includes(v)).concat(wanted.filter(v => !order.includes(v)))
+  return { values: picked, combined: picked.join(', '), count: picked.length }
+}
+
+describe('量表與矩陣', () => {
+  it('分配尚未使用的 rating KEY', () => {
+    assert.deepEqual(allocateRatingKeys(['rating1', 'rating2'], 2), ['rating3', 'rating4'])
+  })
+
+  it('空位不足回傳 null，不截斷', () => {
+    const used = RATING_KEYS.slice(0, 19)
+    assert.equal(allocateRatingKeys(used, 2), null)
+  })
+
+  it('矩陣展開為扁平 scale 欄位，共用 scalePoints', () => {
+    const out = expandScaleMatrixFields(['喜歡午餐嗎？', '喜歡晚餐嗎？'], 3, [], 0)
+    assert.ok(Array.isArray(out))
+    assert.equal(out.length, 2)
+    assert.equal(out[0].key, 'rating1')
+    assert.equal(out[1].key, 'rating2')
+    assert.equal(out[0].type, 'scale')
+    assert.equal(out[0].scalePoints, 3)
+    assert.equal(out[0].label, '喜歡午餐嗎？')
+  })
+
+  it('scale／choice 走三形狀；scale 不要 optionSetId', () => {
+    assert.equal(usesThreeShape('scale'), true)
+    assert.equal(usesThreeShape('choice'), true)
+    assert.equal(usesOptionSet('scale'), false)
+    assert.equal(usesOptionSet('choice'), true)
+    const cleaned = cleanFieldMirror({
+      key: 'rating1',
+      type: 'scale',
+      scalePoints: 5,
+      optionSetId: 'should-drop',
+      multiple: true,
+    })
+    assert.equal(cleaned.optionSetId, undefined)
+    assert.equal(cleaned.multiple, undefined)
+    assert.equal(cleaned.scalePoints, 5)
+  })
+
+  it('scale 存 "1"…"N" 三形狀', () => {
+    const order = ['1', '2', '3']
+    const p = threeShapePayload('3', order)
+    assert.deepEqual(p.values, ['3'])
+    assert.equal(p.combined, '3')
+    assert.equal(p.count, 1)
+    const blank = threeShapePayload('', order)
+    assert.deepEqual(blank.values, [])
+    assert.equal(blank.count, 0)
+  })
+})

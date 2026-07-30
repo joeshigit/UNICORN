@@ -3,6 +3,7 @@
 import { DateTimePicker } from './DateTimePicker'
 import { FileUploader } from './FileUploader'
 import type { Actor } from '@/lib/db'
+import { isValidScalePoints, scaleOptions } from '@/lib/keys'
 import type { FieldDefinition, FileInfo, OptionItem } from '@/types'
 
 interface FieldInputProps {
@@ -99,6 +100,119 @@ export function FieldInput({
           error={!!error}
         />
       )
+
+    case 'choice': {
+      const active = options.filter(o => o.status !== 'deprecated')
+      if (field.multiple) {
+        const selected = Array.isArray(value) ? (value as string[]) : []
+        return (
+          <div
+            className={`max-h-52 space-y-1 overflow-y-auto rounded-xl border p-2 ${
+              error
+                ? 'border-red-300 bg-red-50'
+                : disabled
+                  ? 'border-slate-200 bg-slate-50'
+                  : 'border-slate-300 bg-white'
+            }`}
+          >
+            {active.length === 0 && <p className="hint px-1 py-2">這個選項池還沒有選項</p>}
+            {active.map(option => (
+              <label
+                key={option.value}
+                className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${
+                  disabled ? 'cursor-not-allowed text-slate-500' : 'cursor-pointer hover:bg-slate-50'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                  disabled={disabled}
+                  checked={selected.includes(option.value)}
+                  onChange={e =>
+                    onChange(
+                      e.target.checked
+                        ? [...selected, option.value]
+                        : selected.filter(v => v !== option.value)
+                    )
+                  }
+                />
+                <span className="text-sm">{option.label}</span>
+              </label>
+            ))}
+          </div>
+        )
+      }
+
+      const single = Array.isArray(value) ? (value[0] ?? '') : ((value as string) || '')
+      return (
+        <div
+          className={`space-y-1 rounded-xl border p-2 ${
+            error
+              ? 'border-red-300 bg-red-50'
+              : disabled
+                ? 'border-slate-200 bg-slate-50'
+                : 'border-slate-300 bg-white'
+          }`}
+        >
+          {active.length === 0 && <p className="hint px-1 py-2">這個選項池還沒有選項</p>}
+          {active.map(option => (
+            <label
+              key={option.value}
+              className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${
+                disabled ? 'cursor-not-allowed text-slate-500' : 'cursor-pointer hover:bg-slate-50'
+              }`}
+            >
+              <input
+                type="radio"
+                name={`choice-${field.key}`}
+                className="text-unicorn-600 focus:ring-unicorn-500"
+                disabled={disabled}
+                checked={single === option.value}
+                onChange={() => onChange(option.value)}
+              />
+              <span className="text-sm">{option.label}</span>
+            </label>
+          ))}
+        </div>
+      )
+    }
+
+    case 'scale': {
+      const points = isValidScalePoints(field.scalePoints) ? field.scalePoints : 5
+      const items = scaleOptions(points)
+      const single = Array.isArray(value) ? (value[0] ?? '') : ((value as string) || '')
+      return (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {items.map(option => {
+              const selected = single === option.value
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={disabled}
+                  className={`min-w-[2.5rem] rounded-lg border px-2 py-2 text-sm ${
+                    selected
+                      ? 'border-unicorn-500 bg-unicorn-50 text-unicorn-800'
+                      : disabled
+                        ? 'border-slate-200 bg-slate-50 text-slate-400'
+                        : 'border-slate-300 bg-white hover:border-unicorn-300'
+                  } ${error ? 'border-red-300' : ''}`}
+                  onClick={() => onChange(option.value)}
+                >
+                  <span className="block font-medium">{option.value}</span>
+                  {option.label !== option.value && (
+                    <span className="mt-0.5 block text-[10px] leading-tight text-slate-500">
+                      {option.label}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )
+    }
 
     case 'dropdown': {
       const active = options.filter(o => o.status !== 'deprecated')

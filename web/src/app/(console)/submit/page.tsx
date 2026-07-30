@@ -18,7 +18,12 @@ import {
   getUserRole,
   newSubmissionId,
 } from '@/lib/db'
-import { resolveInitialValue } from '@/lib/keys'
+import {
+  SCALE_DIRECTION_HINT,
+  isValidScalePoints,
+  resolveInitialValue,
+  scaleOptions,
+} from '@/lib/keys'
 import type { FileInfo, OptionItem, Submission, Template } from '@/types'
 
 function SubmitForm() {
@@ -72,7 +77,11 @@ function SubmitForm() {
       setTemplate(found)
 
       const setIds = Array.from(
-        new Set(found.fields.filter(f => f.type === 'dropdown' && f.optionSetId).map(f => f.optionSetId!))
+        new Set(
+          found.fields
+            .filter(f => (f.type === 'dropdown' || f.type === 'choice') && f.optionSetId)
+            .map(f => f.optionSetId!)
+        )
       )
       const loaded: Record<string, OptionItem[]> = {}
       await Promise.all(
@@ -88,15 +97,19 @@ function SubmitForm() {
       const initial: Record<string, unknown> = {}
       for (const field of found.fields) {
         const previous = source?.[field.key]
-        const multiValue = field.type === 'file' || (field.type === 'dropdown' && field.multiple)
+        const multiValue =
+          field.type === 'file' ||
+          ((field.type === 'dropdown' || field.type === 'choice') && field.multiple)
         const emptyValue: unknown = multiValue ? [] : ''
+        const isThreeShape =
+          field.type === 'dropdown' || field.type === 'choice' || field.type === 'scale'
 
         if (previous !== undefined) {
-          // 空白現在存成 null，所以下拉欄位要把 null 正規化成空值，
+          // 空白現在存成 null，所以選擇題／量表要把 null 正規化成空值，
           // 否則複選會變成 [null]
-          if (field.type === 'dropdown' && !field.multiple) {
+          if (isThreeShape && !field.multiple) {
             initial[field.key] = Array.isArray(previous) ? (previous[0] ?? '') : (previous ?? '')
-          } else if (field.type === 'dropdown' && field.multiple) {
+          } else if (isThreeShape && field.multiple) {
             initial[field.key] = Array.isArray(previous)
               ? previous
               : previous == null
@@ -111,9 +124,9 @@ function SubmitForm() {
         // 沒有舊值才套預填值。舊值優先是快照語意：更正舊紀錄要沿用原值，
         // 不能被新版模板的預填值蓋掉。
         const preset = resolveInitialValue(field, undefined, emptyValue)
-        if (field.type === 'dropdown' && field.multiple) {
+        if (isThreeShape && field.multiple) {
           initial[field.key] = Array.isArray(preset) ? preset : preset ? [preset] : []
-        } else if (field.type === 'dropdown') {
+        } else if (isThreeShape) {
           initial[field.key] = Array.isArray(preset) ? (preset[0] ?? '') : preset
         } else {
           initial[field.key] = preset
@@ -190,11 +203,22 @@ function SubmitForm() {
 
         payload[field.key] = value
 
-        if (field.type === 'dropdown' && field.optionSetId) {
+        if ((field.type === 'dropdown' || field.type === 'choice') && field.optionSetId) {
           const items = optionsBySet[field.optionSetId] || []
           optionOrder[field.key] = items.map(i => i.value)
 
           // 空白也要寫（空字串），讓同一張表的每一筆 _optionLabels 鍵集合一致
+          const picked = Array.isArray(value) ? (value as string[]) : value ? [value as string] : []
+          optionLabels[field.key] = items
+            .filter(i => picked.includes(i.value))
+            .map(i => i.label)
+            .join('、')
+        }
+
+        if (field.type === 'scale') {
+          const points = isValidScalePoints(field.scalePoints) ? field.scalePoints : 5
+          const items = scaleOptions(points)
+          optionOrder[field.key] = items.map(i => i.value)
           const picked = Array.isArray(value) ? (value as string[]) : value ? [value as string] : []
           optionLabels[field.key] = items
             .filter(i => picked.includes(i.value))
@@ -299,6 +323,9 @@ function SubmitForm() {
                     />
                   )}
                 </label>
+                {field.type === 'scale' && (
+                  <p className="hint mb-1.5">{SCALE_DIRECTION_HINT}</p>
+                )}
                 <FieldInput
                   field={field}
                   value={values[field.key]}

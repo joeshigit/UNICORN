@@ -228,7 +228,25 @@ orderBy('_submittedAt', 'desc')
 
 ---
 
-## 8. 欄位輸入模式
+## 8. 題型：選擇題與量表
+
+| 題型 | 本質 | 答案從哪來 | KEY |
+|------|------|------------|-----|
+| `dropdown` | 下拉 | optionSet | ＝ optionSet.code |
+| `choice` | 圓鈕／方框（資料同下拉） | optionSet | ＝ optionSet.code |
+| `scale` | 線性刻度（輸入方式，像 date） | 系統固定 `"1"`…`"N"` | `rating1`…`rating20` |
+
+- `scalePoints`：`3 | 4 | 5 | 10 | 100`；**數字愈大愈正面**
+- 量表**不是** optionSet，也不用 likert code 當欄位 KEY
+- 矩陣建題＝建表批次產生多個扁平 `scale` 欄位，共用同一 `scalePoints`；submission **沒有**巢狀 matrix
+- `dropdown`／`choice`／`scale` 送出時都寫三形狀（陣列／Combined／Count）
+- 題庫（靜態／動態）不在本範圍
+
+查詢量表答案用題目 KEY，例如 `where('rating1', '==', '3')`，不是查 `likert3`。
+
+---
+
+## 9. 欄位輸入模式
 
 `required` 與 `inputMode` 是**兩個正交的維度**：
 
@@ -273,7 +291,7 @@ department: ['SCD'], departmentCombined: 'SCD', departmentCount: 1
 
 ---
 
-## 9. 語意日期／時間
+## 10. 語意日期／時間
 
 - Date：`YYYY-MM-DD` 字串 KEY（見上）
 - Time：`HH:mm` 澳門牆鐘；**不**自動令 `endTime = startTime`
@@ -283,7 +301,7 @@ department: ['SCD'], departmentCombined: 'SCD', departmentCount: 1
 
 ---
 
-## 10. 刻意不做的事
+## 11. 刻意不做的事
 
 | 不做 | 理由 |
 |------|------|

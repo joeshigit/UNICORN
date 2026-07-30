@@ -39,7 +39,17 @@ import {
   countKey,
   isLegacyDateKey,
   isPresetEmpty,
+  isValidScalePoints,
+  scaleOptions,
+  usesOptionSet,
+  usesThreeShape,
 } from './keys'
+import type { ScalePoints } from '@/types'
+
+function scaleOptionsOrder(points: ScalePoints | undefined): string[] {
+  const n = isValidScalePoints(points) ? points : 5
+  return scaleOptions(n).map(o => o.value)
+}
 import type {
   FieldDefinition,
   FileInfo,
@@ -386,6 +396,8 @@ function normalizeInputMode(f: FieldDefinition): Pick<FieldDefinition, 'inputMod
 function cleanFields(fields: FieldDefinition[]): FieldDefinition[] {
   return fields.map((f, i) => {
     const { inputMode, presetValue } = normalizeInputMode(f)
+    const isScale = f.type === 'scale'
+    const scalePoints = isScale && isValidScalePoints(f.scalePoints) ? f.scalePoints : isScale ? 5 : undefined
     return stripUndefined({
       key: f.key,
       type: f.type,
@@ -393,8 +405,9 @@ function cleanFields(fields: FieldDefinition[]): FieldDefinition[] {
       required: !!f.required,
       order: i,
       helpText: f.helpText?.trim() || undefined,
-      optionSetId: f.type === 'dropdown' ? f.optionSetId : undefined,
-      multiple: f.type === 'dropdown' && f.multiple ? true : undefined,
+      optionSetId: usesOptionSet(f.type) ? f.optionSetId : undefined,
+      multiple: f.type === 'choice' && f.multiple ? true : f.type === 'dropdown' && f.multiple ? true : undefined,
+      scalePoints,
       inputMode,
       presetValue,
     })
@@ -559,8 +572,13 @@ function buildSubmissionDoc(
   }
 
   for (const field of template.fields) {
-    if (field.type === 'dropdown') {
-      const picked = canonicalOrder(asArray(values[field.key]), optionOrder[field.key])
+    if (usesThreeShape(field.type)) {
+      // dropdown／choice／scale：空白＝[] / '' / 0，不是 null（Count 可查）
+      const order =
+        field.type === 'scale'
+          ? scaleOptionsOrder(field.scalePoints)
+          : optionOrder[field.key]
+      const picked = canonicalOrder(asArray(values[field.key]), order)
       payload[field.key] = picked
       payload[combinedKey(field.key)] = picked.join(', ')
       payload[countKey(field.key)] = picked.length

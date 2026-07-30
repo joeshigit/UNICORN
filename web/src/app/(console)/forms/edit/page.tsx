@@ -13,9 +13,15 @@ import {
   FIXED_KEY_GROUPS,
   MANAGER_GROUP_CODE,
   MODULE_CODE,
+  SCALE_DIRECTION_HINT,
+  SCALE_POINTS_OPTIONS,
   canPresetFieldType,
+  expandScaleMatrixFields,
   isPresetEmpty,
+  isValidScalePoints,
+  scaleOptions,
   shouldWarnOnPreset,
+  usesOptionSet,
   validateFieldMode,
 } from '@/lib/keys'
 import type {
@@ -24,6 +30,7 @@ import type {
   FillAccessType,
   OptionItem,
   OptionSet,
+  ScalePoints,
   Template,
 } from '@/types'
 
@@ -47,7 +54,7 @@ function PresetValueInput({
     ? (field.presetValue[0] ?? '')
     : (field.presetValue ?? '')
 
-  if (field.type === 'dropdown') {
+  if (field.type === 'dropdown' || field.type === 'choice') {
     const active = options.filter(o => o.status !== 'deprecated')
 
     if (field.multiple) {
@@ -86,6 +93,25 @@ function PresetValueInput({
         {active.map(option => (
           <option key={option.value} value={option.value}>
             {option.label}
+          </option>
+        ))}
+      </select>
+    )
+  }
+
+  if (field.type === 'scale') {
+    const points = isValidScalePoints(field.scalePoints) ? field.scalePoints : 5
+    const items = scaleOptions(points)
+    return (
+      <select
+        className="field"
+        value={single}
+        onChange={e => onChange(e.target.value || undefined)}
+      >
+        <option value="">未設定</option>
+        {items.map(option => (
+          <option key={option.value} value={option.value}>
+            {option.value} — {option.label}
           </option>
         ))}
       </select>
@@ -149,6 +175,9 @@ function FormBuilder() {
   const [fillGroups, setFillGroups] = useState<string[]>([])
   const [fields, setFields] = useState<FieldDefinition[]>([])
   const [legacyWarning, setLegacyWarning] = useState('')
+  const [matrixPoints, setMatrixPoints] = useState<ScalePoints>(5)
+  const [matrixLabels, setMatrixLabels] = useState('')
+  const [matrixError, setMatrixError] = useState('')
 
   useEffect(() => {
     const boot = async () => {
@@ -199,7 +228,7 @@ function FormBuilder() {
     [masterSets]
   )
 
-  // dropdown 的 KEY 就是選項池的 code，module/action 等系統保留字不給當一般欄位
+  // dropdown／choice 的 KEY 就是選項池的 code，module/action 等系統保留字不給當一般欄位
   const optionSetKeys: KeyChoice[] = useMemo(() => {
     const seen = new Set<string>()
     return masterSets
@@ -216,6 +245,22 @@ function FormBuilder() {
       { key: '', type: 'text', label: '', required: false, order: prev.length },
     ])
 
+  const addMatrixFields = () => {
+    setMatrixError('')
+    const result = expandScaleMatrixFields(
+      matrixLabels.split('\n'),
+      matrixPoints,
+      fields.map(f => f.key),
+      fields.length
+    )
+    if ('error' in result) {
+      setMatrixError(result.error)
+      return
+    }
+    setFields(prev => [...prev, ...result])
+    setMatrixLabels('')
+  }
+
   const updateField = (index: number, patch: Partial<FieldDefinition>) =>
     setFields(prev =>
       prev.map((field, i) => {
@@ -227,9 +272,16 @@ function FormBuilder() {
             next.type = fixed.type
             next.optionSetId = undefined
             next.multiple = undefined
+            if (fixed.type === 'scale') {
+              next.scalePoints = isValidScalePoints(next.scalePoints) ? next.scalePoints : 5
+            } else {
+              next.scalePoints = undefined
+            }
           } else {
-            next.type = 'dropdown'
+            // 選項池 KEY：預設下拉；若本來就是 choice 則保留
+            next.type = field.type === 'choice' ? 'choice' : 'dropdown'
             next.optionSetId = optionSets.find(os => os.code === patch.key && os.isMaster)?.id
+            next.scalePoints = undefined
           }
           if (!next.label.trim()) {
             next.label = fixed?.label || optionSets.find(os => os.code === patch.key)?.name || ''
@@ -239,8 +291,19 @@ function FormBuilder() {
           next.presetValue = undefined
           if (!canPresetFieldType(next.type)) next.inputMode = undefined
         }
+        if (patch.type === 'scale') {
+          next.optionSetId = undefined
+          next.multiple = undefined
+          next.scalePoints = isValidScalePoints(next.scalePoints) ? next.scalePoints : 5
+        }
+        if (patch.type === 'choice' || patch.type === 'dropdown') {
+          next.scalePoints = undefined
+          if (!next.optionSetId && next.key) {
+            next.optionSetId = optionSets.find(os => os.code === next.key && os.isMaster)?.id
+          }
+        }
         // 換選項池或切換複選時，舊的預填值同樣可能不再有效
-        if (patch.optionSetId !== undefined || patch.multiple !== undefined) {
+        if (patch.optionSetId !== undefined || patch.multiple !== undefined || patch.scalePoints !== undefined) {
           next.presetValue = undefined
         }
         return next
@@ -268,7 +331,12 @@ function FormBuilder() {
     if (fields.length === 0) list.push('至少要有一個欄位')
     if (fields.some(f => !f.key)) list.push('每個欄位都要選 KEY')
     if (fields.some(f => !f.label.trim())) list.push('每個欄位都要有顯示名稱')
-    if (fields.some(f => f.type === 'dropdown' && !f.optionSetId)) list.push('下拉欄位要選一個選項池')
+    if (fields.some(f => usesOptionSet(f.type) && !f.optionSetId)) {
+      list.push('下拉／選擇題欄位要選一個選項池')
+    }
+    if (fields.some(f => f.type === 'scale' && !isValidScalePoints(f.scalePoints))) {
+      list.push('量表欄位要選刻度點數（3／4／5／10／100）')
+    }
     if (new Set(fields.map(f => f.key)).size !== fields.length) list.push('同一個 KEY 只能用一次')
     if (fillAccessType === 'groups' && fillGroups.length === 0) {
       list.push('填報權限設為指定群組時，至少要選一個群組')
@@ -295,7 +363,7 @@ function FormBuilder() {
         list.push(`「${field.label || field.key}」寫死一個日期／時間，除了固定年度之類的情況通常是錯的`)
       }
 
-      if (field.type === 'dropdown' && !isPresetEmpty(field.presetValue)) {
+      if (usesOptionSet(field.type) && !isPresetEmpty(field.presetValue)) {
         const items = optionSets.find(os => os.id === field.optionSetId)?.items || []
         const picked = Array.isArray(field.presetValue) ? field.presetValue : [field.presetValue!]
         for (const value of picked) {
@@ -532,6 +600,45 @@ function FormBuilder() {
         </section>
 
         <section className="card space-y-3 p-6">
+          <h2 className="font-semibold">矩陣批次（量表）</h2>
+          <p className="hint">
+            一次加入多題扁平量表欄位，共用同一刻度。每列一個題目名稱；系統自動分配 rating KEY。
+            {SCALE_DIRECTION_HINT}
+          </p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className="label mb-1 text-xs">刻度點數</label>
+              <select
+                className="field"
+                value={matrixPoints}
+                onChange={e => setMatrixPoints(Number(e.target.value) as ScalePoints)}
+              >
+                {SCALE_POINTS_OPTIONS.map(n => (
+                  <option key={n} value={n}>
+                    {n} 點
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label mb-1 text-xs">題目（一行一題）</label>
+              <textarea
+                className="field"
+                rows={3}
+                value={matrixLabels}
+                onChange={e => setMatrixLabels(e.target.value)}
+                placeholder={'喜歡午餐嗎？\n喜歡晚餐嗎？'}
+              />
+            </div>
+          </div>
+          {matrixError && <p className="text-sm text-red-600">{matrixError}</p>}
+          <button type="button" className="btn-secondary btn-sm" onClick={addMatrixFields}>
+            <Plus className="h-4 w-4" />
+            加入矩陣題
+          </button>
+        </section>
+
+        <section className="card space-y-3 p-6">
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">欄位</h2>
             <span className="hint">{fields.length} 個</span>
@@ -588,7 +695,7 @@ function FormBuilder() {
                             ))}
                         </optgroup>
                       ))}
-                      <optgroup label="選項池（下拉）">
+                      <optgroup label="選項池（下拉／選擇題）">
                         {optionSetKeys.map(choice => (
                           <option
                             key={choice.key}
@@ -613,8 +720,24 @@ function FormBuilder() {
                   </div>
                 </div>
 
-                {field.type === 'dropdown' && (
+                {usesOptionSet(field.type) && (
                   <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="label mb-1 text-xs">顯示方式</label>
+                      <select
+                        className="field"
+                        value={field.type}
+                        onChange={e =>
+                          updateField(index, {
+                            type: e.target.value as 'dropdown' | 'choice',
+                            multiple: e.target.value === 'dropdown' ? field.multiple : field.multiple,
+                          })
+                        }
+                      >
+                        <option value="dropdown">下拉選單</option>
+                        <option value="choice">選擇題（圓鈕／方框）</option>
+                      </select>
+                    </div>
                     <div>
                       <label className="label mb-1 text-xs">用哪個選項清單</label>
                       <select
@@ -630,7 +753,7 @@ function FormBuilder() {
                         ))}
                       </select>
                     </div>
-                    <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm">
+                    <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm sm:col-span-2">
                       <input
                         type="checkbox"
                         className="rounded text-unicorn-600 focus:ring-unicorn-500"
@@ -639,6 +762,28 @@ function FormBuilder() {
                       />
                       可複選
                     </label>
+                  </div>
+                )}
+
+                {field.type === 'scale' && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="label mb-1 text-xs">刻度點數</label>
+                      <select
+                        className="field"
+                        value={field.scalePoints || 5}
+                        onChange={e =>
+                          updateField(index, { scalePoints: Number(e.target.value) as ScalePoints })
+                        }
+                      >
+                        {SCALE_POINTS_OPTIONS.map(n => (
+                          <option key={n} value={n}>
+                            {n} 點
+                          </option>
+                        ))}
+                      </select>
+                      <p className="hint mt-1">{SCALE_DIRECTION_HINT}</p>
+                    </div>
                   </div>
                 )}
 
