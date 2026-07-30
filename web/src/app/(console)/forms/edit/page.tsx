@@ -33,10 +33,11 @@ import {
   optionSetCodesWithoutStandard,
   resolveScaleValueLabels,
   shouldWarnOnPreset,
-  usesOptionSet,
+  fieldUsesOptionSet,
   validateFieldMode,
   validateScaleValueLabels,
   yesNoOptions,
+  yesNoValueOrder,
   isYesNoField,
 } from '@/lib/keys'
 import type {
@@ -420,7 +421,7 @@ function FormBuilder() {
     if (fields.length === 0) list.push('至少要有一個欄位')
     if (fields.some(f => !f.key)) list.push('每個欄位都要選 KEY')
     if (fields.some(f => !f.label.trim())) list.push('每個欄位都要有顯示名稱')
-    if (fields.some(f => usesOptionSet(f.type) && !isYesNoField(f) && !f.optionSetId)) {
+    if (fields.some(f => fieldUsesOptionSet(f) && !f.optionSetId)) {
       list.push('下拉／選擇題欄位要選一個標準選項')
     }
     if (fields.some(f => isYesNoField(f) && typeof f.yesNoAllowNa !== 'boolean')) {
@@ -440,7 +441,7 @@ function FormBuilder() {
       const problem = validateFieldMode(field)
       if (problem) list.push(problem.message)
 
-      if (usesOptionSet(field.type) && !isYesNoField(field) && field.optionSetId) {
+      if (fieldUsesOptionSet(field) && field.optionSetId) {
         const set = optionSets.find(os => os.id === field.optionSetId)
         if (set && set.code !== field.key) {
           list.push(`「${field.label || field.key}」的標準選項 code 必須等於 KEY`)
@@ -455,6 +456,16 @@ function FormBuilder() {
         if (standard.valueModel === 'scale') {
           const labelErr = validateScaleValueLabels(field.scalePoints, field.scaleValueLabels)
           if (labelErr) list.push(`「${field.label || field.key}」：${labelErr}`)
+        }
+      }
+
+      if (isYesNoField(field) && !isPresetEmpty(field.presetValue)) {
+        const allowed = new Set(yesNoValueOrder(field.yesNoAllowNa === true))
+        const picked = Array.isArray(field.presetValue) ? field.presetValue : [field.presetValue!]
+        for (const value of picked) {
+          if (!allowed.has(String(value))) {
+            list.push(`「${field.label || field.key}」的預填值「${value}」不是有效的 是/否 答案`)
+          }
         }
       }
     }
@@ -472,7 +483,7 @@ function FormBuilder() {
         list.push(`「${field.label || field.key}」寫死一個日期／時間，除了固定年度之類的情況通常是錯的`)
       }
 
-      if (usesOptionSet(field.type) && !isYesNoField(field) && !isPresetEmpty(field.presetValue)) {
+      if (fieldUsesOptionSet(field) && !isPresetEmpty(field.presetValue)) {
         const items = optionSets.find(os => os.id === field.optionSetId)?.items || []
         const picked = Array.isArray(field.presetValue) ? field.presetValue : [field.presetValue!]
         for (const value of picked) {
@@ -863,7 +874,7 @@ function FormBuilder() {
                   </p>
                 )}
 
-                {usesOptionSet(field.type) && !isYesNoField(field) && (
+                {fieldUsesOptionSet(field) && (
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div>
                       <label className="label mb-1 text-xs">顯示方式</label>

@@ -779,14 +779,23 @@ function usesOptionSet(type) {
   return type === 'dropdown' || type === 'choice'
 }
 
+function isYesNoField(field) {
+  return field.yesNoAllowNa !== undefined
+}
+
+function fieldUsesOptionSet(field) {
+  return usesOptionSet(field.type) && !isYesNoField(field)
+}
+
 function cleanFieldMirror(f) {
   const isScale = f.type === 'scale'
   return {
     key: f.key,
     type: f.type,
-    optionSetId: usesOptionSet(f.type) ? f.optionSetId : undefined,
-    multiple: (f.type === 'dropdown' || f.type === 'choice') && f.multiple ? true : undefined,
+    optionSetId: fieldUsesOptionSet(f) ? f.optionSetId : undefined,
+    multiple: fieldUsesOptionSet(f) && f.multiple ? true : undefined,
     scalePoints: isScale ? f.scalePoints || 5 : undefined,
+    yesNoAllowNa: isYesNoField(f) ? f.yesNoAllowNa : undefined,
   }
 }
 
@@ -823,6 +832,8 @@ describe('量表與矩陣', () => {
     assert.equal(usesThreeShape('choice'), true)
     assert.equal(usesOptionSet('scale'), false)
     assert.equal(usesOptionSet('choice'), true)
+    assert.equal(fieldUsesOptionSet({ type: 'choice', yesNoAllowNa: false }), false)
+    assert.equal(fieldUsesOptionSet({ type: 'choice', optionSetId: 'x' }), true)
     const cleaned = cleanFieldMirror({
       key: 'rating1',
       type: 'scale',
@@ -833,6 +844,16 @@ describe('量表與矩陣', () => {
     assert.equal(cleaned.optionSetId, undefined)
     assert.equal(cleaned.multiple, undefined)
     assert.equal(cleaned.scalePoints, 5)
+    const yesNoCleaned = cleanFieldMirror({
+      key: 'coun_risk',
+      type: 'choice',
+      yesNoAllowNa: false,
+      optionSetId: 'should-drop',
+      multiple: true,
+    })
+    assert.equal(yesNoCleaned.optionSetId, undefined)
+    assert.equal(yesNoCleaned.multiple, undefined)
+    assert.equal(yesNoCleaned.yesNoAllowNa, false)
   })
 
   it('scale 存 "1"…"N" 三形狀', () => {
@@ -926,6 +947,20 @@ function isValidTypeValueModelPair(type, valueModel) {
   if (type === 'choice') return valueModel === 'optionSet' || valueModel === 'yesNo'
   if (free.includes(type)) return valueModel === 'free'
   return false
+}
+
+function allowedValueModels(type) {
+  if (type === 'scale') return ['scale']
+  if (type === 'dropdown') return ['optionSet']
+  if (type === 'choice') return ['optionSet', 'yesNo']
+  if (['text', 'textarea', 'number', 'date', 'time'].includes(type)) return ['free']
+  return null
+}
+
+function expectedValueModel(type) {
+  const allowed = allowedValueModels(type)
+  if (!allowed || allowed.length !== 1) return null
+  return allowed[0]
 }
 
 function activeStandardsForPicker(standards) {
@@ -1046,6 +1081,9 @@ describe('yesNo 標準契約', () => {
     assert.equal(isValidTypeValueModelPair('choice', 'yesNo'), true)
     assert.equal(isValidTypeValueModelPair('choice', 'free'), false)
     assert.equal(isValidTypeValueModelPair('dropdown', 'yesNo'), false)
+    assert.deepEqual(allowedValueModels('choice'), ['optionSet', 'yesNo'])
+    assert.equal(expectedValueModel('choice'), null)
+    assert.equal(expectedValueModel('text'), 'free')
   })
 
   it('yesNoValueOrder：二元 vs 三元', () => {

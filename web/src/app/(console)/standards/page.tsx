@@ -15,6 +15,7 @@ import {
   RESERVED_CODES,
   SCALE_POINTS_OPTIONS,
   expectedValueModel,
+  allowedValueModels,
   scaleOptions,
   validateScaleValueLabels,
   validateStandardKeyCode,
@@ -304,7 +305,9 @@ function StandardsPageInner() {
                     </option>
                   ))}
                 </select>
-                <p className="hint mt-1">答案模型：{expectedValueModel(freeType)}</p>
+                <p className="hint mt-1">
+                  答案方式：{expectedValueModel(freeType) ?? allowedValueModels(freeType)?.join(' / ')}
+                </p>
               </div>
             </div>
           )}

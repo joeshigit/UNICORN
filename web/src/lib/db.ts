@@ -50,6 +50,7 @@ import {
   usesThreeShape,
   yesNoValueOrder,
   isYesNoField,
+  fieldUsesOptionSet,
 } from './keys'
 import type {
   FieldDefinition,
@@ -563,9 +564,9 @@ function cleanFields(fields: FieldDefinition[]): FieldDefinition[] {
       required: !!f.required,
       order: i,
       helpText: f.helpText?.trim() || undefined,
-      optionSetId: usesOptionSet(f.type) && !isYesNoField(f) ? f.optionSetId : undefined,
+      optionSetId: fieldUsesOptionSet(f) ? f.optionSetId : undefined,
       multiple:
-        f.type === 'choice' && !isYesNoField(f) && f.multiple
+        f.type === 'choice' && fieldUsesOptionSet(f) && f.multiple
           ? true
           : f.type === 'dropdown' && f.multiple
             ? true

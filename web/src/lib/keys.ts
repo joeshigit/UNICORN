@@ -195,12 +195,27 @@ export function isYesNoField(field: Pick<FieldDefinition, 'yesNoAllowNa'>): bool
   return field.yesNoAllowNa !== undefined
 }
 
-export function expectedValueModel(type: FieldType): StandardValueModel | null {
-  if (type === 'scale') return 'scale'
-  if (type === 'dropdown') return 'optionSet'
-  if (type === 'choice') return 'optionSet'
-  if (FREE_STANDARD_TYPES.includes(type)) return 'free'
+/** 欄位層級：choice 若為 yesNo 標準題則不走 optionSet */
+export function fieldUsesOptionSet(field: Pick<FieldDefinition, 'type' | 'yesNoAllowNa'>): boolean {
+  return usesOptionSet(field.type) && !isYesNoField(field)
+}
+
+/** 題型可選的答案方式（UI／驗證用）。choice 有 optionSet 與 yesNo 兩種，無單一預設。 */
+export function allowedValueModels(type: FieldType): StandardValueModel[] | null {
+  if (type === 'scale') return ['scale']
+  if (type === 'dropdown') return ['optionSet']
+  if (type === 'choice') return ['optionSet', 'yesNo']
+  if (FREE_STANDARD_TYPES.includes(type)) return ['free']
   return null
+}
+
+/**
+ * @deprecated 僅供 free 題型 UI 提示。choice 請用 allowedValueModels（optionSet | yesNo）。
+ */
+export function expectedValueModel(type: FieldType): StandardValueModel | null {
+  const allowed = allowedValueModels(type)
+  if (!allowed || allowed.length !== 1) return null
+  return allowed[0]
 }
 
 function isValidTypeValueModelPair(type: FieldType, valueModel: StandardValueModel): boolean {
