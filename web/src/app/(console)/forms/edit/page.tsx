@@ -652,7 +652,9 @@ function FormBuilder() {
           onMobileClose={() => setPoolMobileOpen(false)}
         />
 
-        <div className="min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-8">
+        <div className="min-w-0 flex-1 overflow-y-auto bg-slate-100 px-4 py-5 sm:px-6">
+          {/* Centered canvas — Google Forms–like column width */}
+          <div className="mx-auto w-full max-w-2xl">
           {/* Form title block — Google Forms primary */}
           <section className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <label className="label mb-1">表單名稱</label>
@@ -1132,6 +1134,7 @@ function FormBuilder() {
             >
               {saving ? '儲存中…' : editId ? '儲存變更' : '建立表格'}
             </button>
+          </div>
           </div>
         </div>
       </div>
