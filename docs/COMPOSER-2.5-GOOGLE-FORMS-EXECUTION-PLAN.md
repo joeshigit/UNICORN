@@ -1,7 +1,11 @@
 # Composer 2.5 — UNICORN × Google Forms Execution Plan
 
+**Canonical builder runbook:** [`COMPOSER-2.5-LINE-BY-LINE-BUILDER.md`](./COMPOSER-2.5-LINE-BY-LINE-BUILDER.md)  
+Composer must execute that runbook sequentially, not this summary alone.
+
 **Audience:** Cursor Composer 2.5 (implementation agent)  
-**Source of truth:** [`UNICORN-Google-Forms-Integration-Specification-v3.md`](./UNICORN-Google-Forms-Integration-Specification-v3.md)  
+**Background spec:** [`UNICORN-Google-Forms-Integration-Specification-v3.md`](./UNICORN-Google-Forms-Integration-Specification-v3.md)  
+**Technical lock:** [`GOOGLE-FORMS-ARCHITECTURE-DECISION.md`](./GOOGLE-FORMS-ARCHITECTURE-DECISION.md)  
 **Mode:** Phased. Additive. Stop at gates. Do not rebuild Google Forms.
 
 ---
@@ -384,6 +388,10 @@ START PHASE 0 ONLY
 
 - [x] v3 specification checked into `docs/`  
 - [x] This Composer execution plan checked into `docs/`  
-- [ ] Human assigns Composer 2.5 to **Phase 0 only**  
-- [ ] Phase 0 docs reviewed and approved  
+- [x] Rigid Phase 0 constraints acknowledged in §1.1  
+- [x] `docs/GOOGLE-FORMS-ARCHITECTURE-DECISION.md` concrete technical spec  
+- [x] `docs/GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md` capability matrix  
+- [x] Canonical runbook: `docs/COMPOSER-2.5-LINE-BY-LINE-BUILDER.md`  
+- [ ] Human assigns Composer to Runbook **PHASE 0 ONLY** (codebase audit)  
+- [ ] Human sign-off to create `web/src/types/google-forms.ts` and start Phase 1  
 - [ ] Then Composer proceeds phase-by-phase with stop reports  

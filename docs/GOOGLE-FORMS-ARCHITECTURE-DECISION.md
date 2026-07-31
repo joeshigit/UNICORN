@@ -1,5 +1,8 @@
 # Google Forms Architecture Decision — Phase 0 Technical Specification
 
+**Builder execution order:** follow [`COMPOSER-2.5-LINE-BY-LINE-BUILDER.md`](./COMPOSER-2.5-LINE-BY-LINE-BUILDER.md).  
+This file remains the locked technical contract (schema / SDK / cron / prefill).
+
 **Status:** Phase 0 — awaiting human sign-off  
 **Constraint acceptance:** ACCEPTED
 
@@ -7,7 +10,7 @@
 - Phase 0 is documentation only.
 - No Phase 1+ feature code without explicit human sign-off.
 
-**Related:** [`GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md`](./GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md) · [`COMPOSER-2.5-GOOGLE-FORMS-EXECUTION-PLAN.md`](./COMPOSER-2.5-GOOGLE-FORMS-EXECUTION-PLAN.md) · [`UNICORN-Google-Forms-Integration-Specification-v3.md`](./UNICORN-Google-Forms-Integration-Specification-v3.md)
+**Related:** [`COMPOSER-2.5-LINE-BY-LINE-BUILDER.md`](./COMPOSER-2.5-LINE-BY-LINE-BUILDER.md) · [`GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md`](./GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md) · [`COMPOSER-2.5-GOOGLE-FORMS-EXECUTION-PLAN.md`](./COMPOSER-2.5-GOOGLE-FORMS-EXECUTION-PLAN.md) · [`UNICORN-Google-Forms-Integration-Specification-v3.md`](./UNICORN-Google-Forms-Integration-Specification-v3.md)
 
 ---
 

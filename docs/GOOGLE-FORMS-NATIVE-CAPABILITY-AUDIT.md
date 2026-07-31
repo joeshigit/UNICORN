@@ -1,5 +1,7 @@
 # Google Forms Native Capability Audit — Phase 0
 
+**Builder execution order:** [`COMPOSER-2.5-LINE-BY-LINE-BUILDER.md`](./COMPOSER-2.5-LINE-BY-LINE-BUILDER.md)
+
 **Status:** Phase 0 — awaiting human sign-off  
 **Constraint:** Concrete matrix only. No feature code.  
 **Architecture binding:** [`GOOGLE-FORMS-ARCHITECTURE-DECISION.md`](./GOOGLE-FORMS-ARCHITECTURE-DECISION.md)
