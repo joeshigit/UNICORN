@@ -3,12 +3,12 @@
 **Builder execution order:** follow [`COMPOSER-2.5-LINE-BY-LINE-BUILDER.md`](./COMPOSER-2.5-LINE-BY-LINE-BUILDER.md).  
 This file remains the locked technical contract (schema / SDK / cron / prefill).
 
-**Status:** Phase 0 — awaiting human sign-off  
+**Status:** Phase 1 gate correction — PO Option B (2026-07-31)  
 **Constraint acceptance:** ACCEPTED
 
 - Do not invent any new schema types beyond `GoogleFormConfig` and `UnicornGoogleSubmission`.
-- Phase 0 is documentation only.
-- No Phase 1+ feature code without explicit human sign-off.
+- Forms SDK contract: **existing monolithic `googleapis` only** (PO Option B). Do **not** install `@googleapis/forms`.
+- No Phase 1.5+ feature code without explicit human sign-off.
 
 **Related:** [`COMPOSER-2.5-LINE-BY-LINE-BUILDER.md`](./COMPOSER-2.5-LINE-BY-LINE-BUILDER.md) · [`GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md`](./GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md) · [`COMPOSER-2.5-GOOGLE-FORMS-EXECUTION-PLAN.md`](./COMPOSER-2.5-GOOGLE-FORMS-EXECUTION-PLAN.md) · [`UNICORN-Google-Forms-Integration-Specification-v3.md`](./UNICORN-Google-Forms-Integration-Specification-v3.md)
 
@@ -179,38 +179,41 @@ export interface UnicornGoogleSubmission {
 
 ---
 
-## 2. Exact `@googleapis/forms` SDK usage
+## 2. Exact `googleapis` Forms SDK usage (PO Option B — locked)
+
+**PO decision (2026-07-31):** Keep the existing monolithic `googleapis` package already used for Drive DWD. Do **not** add a second Forms client (`@googleapis/forms`).
 
 ### 2.1 Package
 
 ```text
 functions/package.json dependency:
-  "@googleapis/forms": "^6.0.1"   // or current latest at implement time
+  "googleapis": "^169.0.0"   // already present; reuse for Forms + Drive
 ```
 
-Do **not** call Forms through the monolithic `googleapis` Forms surface for new code. Use `@googleapis/forms` as specified.
+Do **not** install `@googleapis/forms`. All new Forms code MUST use `google.forms({ version: 'v1', auth })` from `googleapis`.
 
-### 2.2 Client construction (planned)
+### 2.2 Client construction (Phase 1 live pattern)
 
 ```ts
-import { forms, auth as formsAuth } from '@googleapis/forms'
-import type { forms_v1 } from '@googleapis/forms'
+import { google, forms_v1 } from 'googleapis'
 
-const authClient = new formsAuth.JWT({
+const authClient = new google.auth.JWT({
   email: serviceAccount.client_email,
   key: serviceAccount.private_key,
-  scopes: [
-    'https://www.googleapis.com/auth/forms.body',
-    'https://www.googleapis.com/auth/forms.responses.readonly',
-  ],
+  // Phase 1: least privilege — read-only body only
+  scopes: ['https://www.googleapis.com/auth/forms.body.readonly'],
   subject: IMPERSONATE_USER, // Domain-Wide Delegation — same pattern as Drive
 })
 
-const formsClient: forms_v1.Forms = forms({
+await authClient.authorize()
+
+const formsClient: forms_v1.Forms = google.forms({
   version: 'v1',
   auth: authClient,
 })
 ```
+
+Later phases may widen scopes only when that phase needs them (e.g. `forms.body` for `batchUpdate`, `forms.responses.readonly` for ingest). Phase 1 must not request write/responses scopes.
 
 ### 2.3 Exact method signatures to call
 
@@ -482,17 +485,17 @@ function buildPrefillUrl(
 
 - [x] Rigid constraints acknowledged
 - [x] Exact `web/src/types/google-forms.ts` contracts (`GoogleFormConfig`, `UnicornGoogleSubmission` only)
-- [x] Exact `@googleapis/forms` method signatures
+- [x] Exact `googleapis` Forms method signatures (`google.forms('v1')`)
 - [x] Exact 6-day Cloud Scheduler cron for `forms.watches.renew`
 - [x] Exact `FB_PUBLIC_LOAD_DATA_` regex + entry extraction logic
+- [x] PO Option B: forbid second Forms SDK (`@googleapis/forms`)
 
-### Forbidden until explicit human sign-off
+### Forbidden until explicit human sign-off for that phase
 
-- Creating `web/src/types/google-forms.ts` in the codebase
-- Installing `@googleapis/forms` / wiring Functions
-- Mapping Workspace UI
+- Installing `@googleapis/forms` (forbidden under Option B — use `googleapis` only)
+- Mapping Workspace UI / imported-form display UI (beyond Phase 1 API+Firestore connect)
 - Pub/Sub ingest
 - Prefill runtime service
-- Any Phase 1–10 feature code
+- Phase 1.5+ feature code without explicit human approval
 
-**STOP. Await human approval before Phase 1.**
+**Phase 1 gate correction:** document aligned to Option B. STOP before Phase 1.5.

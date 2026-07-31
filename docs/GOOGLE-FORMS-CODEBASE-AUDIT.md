@@ -1,10 +1,12 @@
 # Google Forms — Codebase Audit (PHASE 0)
 
-**Status:** COMPLETE — awaiting human approval before Phase 1  
+**Status:** COMPLETE (Phase 0)  
 **Date:** 2026-07-31  
 **Branch:** `cursor/google-forms-composer-plan-a7fd`  
 **Runbook:** [`COMPOSER-2.5-LINE-BY-LINE-BUILDER.md`](./COMPOSER-2.5-LINE-BY-LINE-BUILDER.md) §1 / §61  
 **Constraint:** Documentation only. No Google Forms integration code in this phase.
+
+**Amendment (PO Option B, 2026-07-31):** Forms SDK = existing `googleapis` only. Absence of `@googleapis/forms` is **correct by contract**, not a gap to fill.
 
 **Verdict:** Reuse OptionSets, Universal KEY intent, immutable submission pool, Drive JWT+DWD, and `asia-east1` Functions. Do **not** invent parallel meaning/auth/submission systems. Google Forms surface code does not exist yet (types/SDK/watches/Pub/Sub/Tasks/mapping UI are missing).
 
@@ -16,7 +18,7 @@
 |----------|--------|
 | `web/src/types/google-forms.ts` | MISSING (locked in Architecture Decision only) |
 | `GoogleFormConfig` / `UnicornGoogleSubmission` in code | MISSING |
-| `@googleapis/forms` | MISSING (`functions/package.json` has `googleapis` only) |
+| `@googleapis/forms` | ABSENT by design (PO Option B — use `googleapis` only) |
 | Forms watches / Pub/Sub ingest / Cloud Tasks actions | MISSING |
 | Region | `asia-east1` |
 | `IMPERSONATE_USER` | `joeshi@dbyv.org` in `functions/src/index.ts` |
@@ -225,7 +227,7 @@ Hardcoded base: `https://asia-east1-unicorn-dcs.cloudfunctions.net/...`
 |-------------|-----|
 | **NEW** `web/src/types/google-forms.ts` | Only `GoogleFormConfig` + `UnicornGoogleSubmission` |
 | `web/src/types/index.ts` | Re-export |
-| `functions/package.json` | Add `@googleapis/forms` (verify current version at install time) |
+| `functions/package.json` | Reuse existing `googleapis` for Forms (PO Option B). Do **not** add `@googleapis/forms` |
 | **NEW** `functions/src/googleForms/*` | client, connect, watches, ingest, normalize, prefillEntryExtractor |
 | `functions/src/index.ts` | Export new HTTPS/Pub/Sub/Scheduler targets; keep Drive |
 | `firestore.rules` | `googleFormConfigs`; Google ingest likely Admin SDK only |

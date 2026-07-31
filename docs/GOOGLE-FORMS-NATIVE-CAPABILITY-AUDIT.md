@@ -14,7 +14,7 @@ Schema lock: only `GoogleFormConfig` and `UnicornGoogleSubmission` (path `web/sr
 
 | # | Requirement | Google native capability | Supported? | Official source | Recommended implementation | Risks / limitations |
 |---|-------------|--------------------------|------------|-----------------|----------------------------|---------------------|
-| 1 | Read form structure (items, labels, types, options, required) | `forms.get` | YES | https://developers.google.com/workspace/forms/api/reference/rest/v1/forms/get | `@googleapis/forms` → `formsClient.forms.get({ formId })` | Must map `itemId`/`questionId` carefully; structure differs by question type |
+| 1 | Read form structure (items, labels, types, options, required) | `forms.get` | YES | https://developers.google.com/workspace/forms/api/reference/rest/v1/forms/get | Existing `googleapis` → `google.forms('v1').forms.get({ formId })` | Must map `itemId`/`questionId` carefully; structure differs by question type |
 | 2 | Push governed label/option/required updates | `forms.batchUpdate` | YES | https://developers.google.com/workspace/forms/api/reference/rest/v1/forms/batchUpdate | `formsClient.forms.batchUpdate({ formId, requestBody })` with preview/confirm | Can overwrite presentation if request is too broad — push only governed diffs |
 | 3 | Fetch authoritative response | `forms.responses.get` | YES | https://developers.google.com/workspace/forms/api/guides/retrieve-forms-responses | `formsClient.forms.responses.get({ formId, responseId })` | Answers keyed by `questionId`, not `itemId` |
 | 4 | List responses (backfill/recovery) | `forms.responses.list` | YES | same guide | `formsClient.forms.responses.list({ formId, filter })` | Use for recovery, not primary ingest loop |
@@ -45,7 +45,7 @@ Schema lock: only `GoogleFormConfig` and `UnicornGoogleSubmission` (path `web/sr
 | Universal KEY + OptionSets | `web/src/types/index.ts` | Keep; map into via `GoogleFormConfig.questionMappings` |
 | Immutable correction chain | `_correctFor` / `supersedesSubmissionId` | Align with `UnicornGoogleSubmission.supersedesSubmissionId` |
 | Staff submit UI | `web/src/app/staff/submit/[templateId]/page.tsx` | Do not delete in Phase 0–1; not normal path for connected Forms |
-| `googleapis` package | `functions/package.json` | Keep for Drive; **add** `@googleapis/forms` for Forms |
+| `googleapis` package | `functions/package.json` | Keep for Drive **and** Forms (PO Option B). Do **not** add `@googleapis/forms` |
 
 ---
 

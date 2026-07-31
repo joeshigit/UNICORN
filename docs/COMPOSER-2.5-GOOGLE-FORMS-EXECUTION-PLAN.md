@@ -48,7 +48,7 @@ These constraints override any looser wording elsewhere:
    - [`docs/GOOGLE-FORMS-ARCHITECTURE-DECISION.md`](./GOOGLE-FORMS-ARCHITECTURE-DECISION.md)
    containing at minimum:
    - Exact TypeScript interface file path: `web/src/types/google-forms.ts`
-   - Exact `@googleapis/forms` SDK method signatures to call
+   - Exact `googleapis` Forms SDK method signatures to call (`google.forms('v1')`; no `@googleapis/forms`)
    - Exact Cloud Scheduler cron configuration for **6-day** `forms.watches.renew`
    - Exact DOM/parser regex + logic for extracting `entry.XXXXXX` prefill parameters from the public form URL payload
 3. Also produce [`docs/GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md`](./GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md) with requirement → official capability → source → decision (not essays).
@@ -110,7 +110,7 @@ These constraints override any looser wording elsewhere:
 [`GOOGLE-FORMS-ARCHITECTURE-DECISION.md`](./GOOGLE-FORMS-ARCHITECTURE-DECISION.md) MUST contain:
 
 1. Exact path: `web/src/types/google-forms.ts` and the locked interfaces `GoogleFormConfig` + `UnicornGoogleSubmission` only  
-2. Exact `@googleapis/forms` SDK method signatures  
+2. Exact `googleapis` Forms SDK method signatures (`google.forms('v1')`; no `@googleapis/forms`)  
 3. Exact Cloud Scheduler cron for 6-day `forms.watches.renew`  
 4. Exact prefill `entry.XXXXXX` extraction regex/logic  
 

@@ -21,7 +21,7 @@
 When wording differs:
 
 1. **Product / process / order / gates** → this Runbook wins.
-2. **Concrete locked contracts** (only two schema interfaces; exact `@googleapis/forms` signatures; Scheduler `0 3 */6 * *` Asia/Hong_Kong; `FB_PUBLIC_LOAD_DATA_` regex) → Architecture Decision wins.
+2. **Concrete locked contracts** (only two schema interfaces; exact `googleapis` Forms signatures via `google.forms('v1')` — **no** `@googleapis/forms`; Scheduler `0 3 */6 * *` Asia/Hong_Kong; `FB_PUBLIC_LOAD_DATA_` regex) → Architecture Decision wins.
 3. **Prefer extend over replace** → this Runbook §1.03 wins for existing UNICORN systems; still do not invent new Google schema type names.
 
 ## Schema lock (from Architecture Decision — do not violate)
@@ -381,7 +381,7 @@ Do not create duplicate types if an existing form configuration model can be ext
 
 ---
 
-## 1.2 Install Google Forms SDK
+## 1.2 Google Forms SDK (existing `googleapis` only — PO Option B)
 
 Inspect:
 
@@ -389,11 +389,11 @@ Inspect:
 functions/package.json
 ```
 
-If Google Forms SDK is absent, install the currently supported official package (`@googleapis/forms`).
+UNICORN already depends on monolithic `googleapis` (Drive DWD). **Reuse it for Forms.**
 
-Do NOT blindly install an old version from this document.
+Do **NOT** install `@googleapis/forms` or any second Forms SDK.
 
-Verify the current compatible version first.
+Verify `googleapis` exposes `google.forms({ version: 'v1' })` and the method surface required by Architecture Decision §2.
 
 ---
 
