@@ -32,6 +32,25 @@ UNICORN      = map / standardize / verify / answer workspace / history / resubmi
 11. Prefer additive changes. Do not delete the existing Staff form builder until later phases explicitly retire it.
 12. **Phase gate:** complete and report Phase 0 before any production integration code.
 
+### 1.1 Rigid Phase 0 / schema constraints (MANDATORY — acknowledged)
+
+These constraints override any looser wording elsewhere:
+
+1. **Do not invent any new schema types.** Strictly use only:
+   - `GoogleFormConfig`
+   - `UnicornGoogleSubmission`
+   as defined for [`web/src/types/google-forms.ts`](../web/src/types/google-forms.ts) in [`GOOGLE-FORMS-ARCHITECTURE-DECISION.md`](./GOOGLE-FORMS-ARCHITECTURE-DECISION.md).
+2. Phase 0 output must **not** be generic markdown summaries. It must be a **concrete technical specification** in:
+   - [`docs/GOOGLE-FORMS-ARCHITECTURE-DECISION.md`](./GOOGLE-FORMS-ARCHITECTURE-DECISION.md)
+   containing at minimum:
+   - Exact TypeScript interface file path: `web/src/types/google-forms.ts`
+   - Exact `@googleapis/forms` SDK method signatures to call
+   - Exact Cloud Scheduler cron configuration for **6-day** `forms.watches.renew`
+   - Exact DOM/parser regex + logic for extracting `entry.XXXXXX` prefill parameters from the public form URL payload
+3. Also produce [`docs/GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md`](./GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md) with requirement → official capability → source → decision (not essays).
+4. **Stop after Phase 0 docs** for human approval.
+5. **Do not write any Phase 1+ feature code** without explicit human sign-off.
+
 ---
 
 ## 2. Required reading order (before any work)
@@ -77,59 +96,30 @@ UNICORN      = map / standardize / verify / answer workspace / history / resubmi
 
 ## 4. Phase plan for Composer 2.5
 
-### PHASE 0 — Native capability audit + architecture decision  
+### PHASE 0 — Concrete technical specification (docs only)  
 **Status: FIRST AND MANDATORY**  
-**Allowed outputs:** documentation only  
-**Forbidden:** production integration code, new ingest pipeline, UI for mapping/answer (except notes in docs)
+**Allowed outputs:** documentation only — no `web/src/types/google-forms.ts` file creation yet, no Functions, no UI  
+**Forbidden:** any Phase 1+ feature code without explicit human sign-off
 
-#### Tasks
+#### Rigid deliverable contract
 
-1. Inspect codebase (sections above) and summarize reuse / retire / keep.  
-2. Verify **current official** Google capabilities for:
-   - Forms REST: `forms.get`, `forms.batchUpdate`, `forms.responses.get`
-   - Watches: `forms.watches.create`, `forms.watches.renew`, lifetime, Pub/Sub event shape
-   - Auth: OAuth vs service account vs Domain-Wide Delegation; Forms scopes; form ownership / offboarding
-   - Prefill: official support vs public-page `entry.*` extraction; isolate as one replaceable service if unofficial
-   - Cloud Tasks + Scheduler on this Firebase/GCP project pattern
-3. Produce recommended architecture with explicit “Supported / Not supported / Risk” per requirement.
+[`GOOGLE-FORMS-ARCHITECTURE-DECISION.md`](./GOOGLE-FORMS-ARCHITECTURE-DECISION.md) MUST contain:
 
-#### Deliverables (must create/update)
+1. Exact path: `web/src/types/google-forms.ts` and the locked interfaces `GoogleFormConfig` + `UnicornGoogleSubmission` only  
+2. Exact `@googleapis/forms` SDK method signatures  
+3. Exact Cloud Scheduler cron for 6-day `forms.watches.renew`  
+4. Exact prefill `entry.XXXXXX` extraction regex/logic  
 
-```text
-docs/GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md
-docs/GOOGLE-FORMS-ARCHITECTURE-DECISION.md
-```
-
-Each important requirement in the audit must include:
-
-```text
-Requirement
-Google native capability
-Supported?
-Official source (link)
-Recommended implementation
-Risks / limitations
-```
-
-Architecture decision doc must cover:
-
-- Final ownership model for production Forms  
-- Auth model for Forms API + watches  
-- Ingest path (Watch → Pub/Sub → Function/Cloud Run → responses.get → Firestore)  
-- Deterministic submission ID scheme  
-- Prefill strategy (official or isolated extractor)  
-- Action execution via Cloud Tasks  
-- How existing Staff submit coexists until cutover  
-- Open questions requiring human decision  
+Plus [`GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md`](./GOOGLE-FORMS-NATIVE-CAPABILITY-AUDIT.md) as a concrete capability matrix with official sources.
 
 #### STOP GATE
 
 After Phase 0:
 
-- Commit docs  
+- Commit docs only  
 - **Stop**  
-- Present findings for human review  
-- **Do not start Phase 1** until approved  
+- Present for human approval  
+- **Do not start Phase 1** until explicit sign-off  
 
 ---
 
