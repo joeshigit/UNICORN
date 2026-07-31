@@ -67,9 +67,9 @@ export default function FillCenterPage() {
           }
           action={
             isSuperuser ? (
-              <Link href="/forms/edit" className="btn-primary">
+              <a href="/forms/edit/" className="btn-primary">
                 建立第一張表格
-              </Link>
+              </a>
             ) : undefined
           }
         />

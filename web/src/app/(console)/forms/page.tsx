@@ -60,10 +60,10 @@ function FormsPageInner() {
         title="表格"
         description="建立表格＝挑 Universal KEY、取顯示名稱。表格是資料，不是程式碼。"
         actions={
-          <Link href="/forms/edit" className="btn-primary">
+          <a href="/forms/edit/" className="btn-primary">
             <Plus className="h-4 w-4" />
             建立表格
-          </Link>
+          </a>
         }
       />
 
@@ -76,9 +76,9 @@ function FormsPageInner() {
           title="還沒有任何表格"
           description="先建一張表，把要收集的欄位挑好，就可以開始填報。"
           action={
-            <Link href="/forms/edit" className="btn-primary">
+            <a href="/forms/edit/" className="btn-primary">
               建立第一張表格
-            </Link>
+            </a>
           }
         />
       ) : (
@@ -118,14 +118,14 @@ function FormsPageInner() {
                 <Link href={`/submit?form=${template.id}`} className="btn-secondary btn-sm">
                   填寫
                 </Link>
-                <Link href={`/forms/edit?id=${template.id}`} className="btn-ghost btn-sm">
+                <a href={`/forms/edit/?id=${template.id}`} className="btn-ghost btn-sm">
                   <PenSquare className="h-4 w-4" />
                   編輯
-                </Link>
-                <Link href={`/forms/edit?copy=${template.id}`} className="btn-ghost btn-sm">
+                </a>
+                <a href={`/forms/edit/?copy=${template.id}`} className="btn-ghost btn-sm">
                   <Copy className="h-4 w-4" />
                   複製
-                </Link>
+                </a>
                 <button className="btn-ghost btn-sm text-red-500" onClick={() => handleDelete(template)}>
                   <Trash2 className="h-4 w-4" />
                 </button>

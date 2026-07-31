@@ -518,6 +518,7 @@ export interface TemplateInput {
   managerGroups?: string[]
   fillAccessType?: FillAccessType
   fillGroups?: string[]
+  requiresSubmissionTitle?: boolean
   fields: FieldDefinition[]
 }
 
@@ -594,6 +595,7 @@ export async function createTemplate(input: TemplateInput, userEmail: string): P
       managerGroups: input.managerGroups || [],
       fillAccessType,
       fillGroups: fillAccessType === 'groups' ? input.fillGroups || [] : [],
+      requiresSubmissionTitle: !!input.requiresSubmissionTitle,
       version: 1,
       fields: cleanFields(input.fields),
       createdBy: userEmail,
@@ -621,6 +623,7 @@ export async function updateTemplate(
     managerGroups: input.managerGroups || [],
     fillAccessType,
     fillGroups: fillAccessType === 'groups' ? input.fillGroups || [] : [],
+    requiresSubmissionTitle: !!input.requiresSubmissionTitle,
     version: fieldsChanged ? currentVersion + 1 : currentVersion,
     fields: cleanFields(input.fields),
     updatedAt: serverTimestamp(),

@@ -901,7 +901,8 @@ function assertFieldMatchesStandard(field, standard, optionSetCode) {
   }
   if (standard.valueModel === 'optionSet') {
     if (!field.optionSetId) return '要選選項清單'
-    if (optionSetCode != null && optionSetCode !== field.key) return 'code 必須等於 KEY'
+    // Registry: optionSet.code must match standard.key (form-local field.key may differ — R14)
+    if (optionSetCode != null && optionSetCode !== standard.key) return 'code 必須等於標準 KEY'
     return null
   }
   if (standard.valueModel === 'scale') {
@@ -1055,7 +1056,25 @@ describe('標準資料契約', () => {
       required: false,
       order: 0,
     }
-    assert.equal(assertFieldMatchesStandard(field, std, 'dept'), 'code 必須等於 KEY')
+    assert.equal(assertFieldMatchesStandard(field, std, 'dept'), 'code 必須等於標準 KEY')
+    assert.equal(assertFieldMatchesStandard(field, std, 'school'), null)
+  })
+
+  it('R14：optionSet code 對齊 standard.key，不是要求等於任意 field.key 語意', () => {
+    const std = {
+      key: 'school',
+      type: 'dropdown',
+      valueModel: 'optionSet',
+      optionSetId: 'm1',
+    }
+    const field = {
+      key: 'school',
+      type: 'dropdown',
+      optionSetId: 'm1',
+      label: '入營學校',
+      required: false,
+      order: 0,
+    }
     assert.equal(assertFieldMatchesStandard(field, std, 'school'), null)
   })
 
@@ -1179,5 +1198,122 @@ describe('Universal KEY naming L2 policy (mirrors keys.ts)', () => {
   it('system reserved codes fail format before reserved guard (seeded only via ensureCoreOptionSets)', () => {
     assert.equal(validateOptionSetCodeMirror('managerGroup'), 'format')
     assert.equal(validateOptionSetCodeMirror('module'), 'format')
+  })
+})
+
+// Mirrors formBuilder.ts isExcludedFromQuestionPool
+const POOL_EXCLUDED_KEYS = new Set([
+  ...Array.from({ length: 20 }, (_, i) => `rating${i + 1}`),
+  'text1',
+  'text2',
+  'text3',
+  'text4',
+  'note',
+  'note2',
+  'note3',
+  'quantity1',
+  'quantity2',
+  'quantity3',
+  'quantity4',
+  'quantity5',
+  'amount1',
+  'amount2',
+  'amount3',
+  'upload',
+  'upload2',
+  'upload3',
+  'upload4',
+  'title',
+])
+
+function isExcludedFromQuestionPool(key) {
+  return POOL_EXCLUDED_KEYS.has(key)
+}
+
+describe('UNICORN 題庫 pool exclusions', () => {
+  it('omits rating slots and numbered text/number/file placeholders', () => {
+    assert.equal(isExcludedFromQuestionPool('rating5'), true)
+    assert.equal(isExcludedFromQuestionPool('text1'), true)
+    assert.equal(isExcludedFromQuestionPool('note2'), true)
+    assert.equal(isExcludedFromQuestionPool('quantity3'), true)
+    assert.equal(isExcludedFromQuestionPool('upload2'), true)
+  })
+
+  it('keeps semantic fixed keys and meaningful standard keys', () => {
+    assert.equal(isExcludedFromQuestionPool('startDate'), false)
+    assert.equal(isExcludedFromQuestionPool('documentDate'), false)
+    assert.equal(isExcludedFromQuestionPool('score_projectExecution'), false)
+  })
+
+  it('excludes title from pool (form-level requiresSubmissionTitle instead)', () => {
+    assert.equal(isExcludedFromQuestionPool('title'), true)
+  })
+
+  it('excludes all upload slots (file is an answer manner)', () => {
+    assert.equal(isExcludedFromQuestionPool('upload'), true)
+    assert.equal(isExcludedFromQuestionPool('upload3'), true)
+  })
+})
+
+const SUBMISSION_TITLE_KEY = 'title'
+
+function syncFieldsWithSubmissionTitleMirror(fields, requires) {
+  if (!requires) {
+    return fields.filter(f => !f.submissionTitle).map((f, i) => ({ ...f, order: i }))
+  }
+  const rest = fields.filter(f => !f.submissionTitle)
+  const adopt = rest.find(f => f.key === SUBMISSION_TITLE_KEY)
+  const others = adopt ? rest.filter(f => f.clientId !== adopt.clientId) : rest
+  const titleField = adopt
+    ? { ...adopt, key: SUBMISSION_TITLE_KEY, type: 'text', required: true, submissionTitle: true }
+    : {
+        clientId: 't1',
+        key: SUBMISSION_TITLE_KEY,
+        type: 'text',
+        label: '標題',
+        required: true,
+        submissionTitle: true,
+        order: 0,
+      }
+  return [titleField, ...others].map((f, i) => ({ ...f, order: i }))
+}
+
+describe('submission title (requiresSubmissionTitle)', () => {
+  it('inject locked title as first field when enabled', () => {
+    const out = syncFieldsWithSubmissionTitleMirror(
+      [{ clientId: 'a', key: 'school', type: 'dropdown', label: '學校', required: false, order: 0 }],
+      true
+    )
+    assert.equal(out.length, 2)
+    assert.equal(out[0].key, 'title')
+    assert.equal(out[0].submissionTitle, true)
+    assert.equal(out[0].required, true)
+    assert.equal(out[1].key, 'school')
+  })
+
+  it('adopts existing title field when enabling', () => {
+    const out = syncFieldsWithSubmissionTitleMirror(
+      [
+        { clientId: 'x', key: 'title', type: 'text', label: '案名', required: false, order: 0 },
+        { clientId: 'y', key: 'school', type: 'dropdown', label: '學校', required: false, order: 1 },
+      ],
+      true
+    )
+    assert.equal(out.length, 2)
+    assert.equal(out[0].label, '案名')
+    assert.equal(out[0].submissionTitle, true)
+    assert.equal(out[0].required, true)
+  })
+
+  it('removes system title field when disabled', () => {
+    const out = syncFieldsWithSubmissionTitleMirror(
+      [
+        { clientId: 't', key: 'title', type: 'text', label: '標題', required: true, submissionTitle: true, order: 0 },
+        { clientId: 's', key: 'school', type: 'dropdown', label: '學校', required: false, order: 1 },
+      ],
+      false
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].key, 'school')
   })
 })

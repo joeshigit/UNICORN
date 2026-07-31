@@ -1,11 +1,37 @@
 'use client'
 
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowDown, ArrowLeft, ArrowUp, Plus, Trash2 } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
+  ChevronRight,
+  GripVertical,
+  Plus,
+  Settings,
+  Trash2,
+} from 'lucide-react'
 import { SuperuserGuard, useAuth } from '@/components/auth'
-import { ErrorBanner, PageHeader, Spinner } from '@/components/ui'
+import { FormSettingsDrawer } from '@/components/forms/FormSettingsDrawer'
+import { QuestionPoolPanel } from '@/components/forms/QuestionPoolPanel'
+import { ErrorBanner, Spinner } from '@/components/ui'
+import {
+  blankFieldFromManner,
+  buildQuestionPool,
+  fieldFromPoolItem,
+  isContractLockedField,
+  isSubmissionTitleField,
+  markSubmissionTitleFields,
+  optionSetsForField,
+  stripDraft,
+  syncFieldsWithSubmissionTitle,
+  toDraftFields,
+  validateSubmissionTitleSetup,
+  type DraftField,
+  type QuestionPoolItem,
+} from '@/lib/formBuilder'
 import {
   createTemplate,
   findLegacyDateKeyUsage,
@@ -17,32 +43,32 @@ import {
 import {
   ACTION_CODE,
   FIXED_KEYS,
-  FIXED_KEY_GROUPS,
   MANAGER_GROUP_CODE,
   MODULE_CODE,
   SCALE_DIRECTION_HINT,
   SCALE_POINTS_OPTIONS,
-  activeStandardsForPicker,
-  applyStandardToField,
+  answerFormatLabel,
   assertFieldMatchesStandard,
   canPresetFieldType,
   expandScaleMatrixFields,
+  fieldUsesOptionSet,
   findStandardByKey,
+  isKeyUsedInForm,
   isPresetEmpty,
   isValidScalePoints,
-  optionSetCodesWithoutStandard,
+  isYesNoField,
   resolveScaleValueLabels,
   shouldWarnOnPreset,
-  fieldUsesOptionSet,
   validateFieldMode,
   validateScaleValueLabels,
+  validateTemplateFieldKey,
   yesNoOptions,
   yesNoValueOrder,
-  isYesNoField,
 } from '@/lib/keys'
 import type {
   FieldDefinition,
   FieldInputMode,
+  FieldType,
   FillAccessType,
   OptionItem,
   OptionSet,
@@ -51,13 +77,23 @@ import type {
   Template,
 } from '@/types'
 
-interface KeyChoice {
-  key: string
-  type: FieldDefinition['type']
-  label: string
-}
+type MannerChoice = FieldType | 'yesNo' | 'yesNoNa'
 
-/** 預填值的輸入元件，依欄位型別決定長什麼樣 */
+const MANNER_OPTIONS: Array<{ id: MannerChoice; label: string }> = [
+  { id: 'text', label: '短文字' },
+  { id: 'textarea', label: '長文字' },
+  { id: 'number', label: '數字' },
+  { id: 'date', label: '日期' },
+  { id: 'time', label: '時間' },
+  { id: 'datetime', label: '日期與時間' },
+  { id: 'yesNo', label: '是／否' },
+  { id: 'yesNoNa', label: '是／否／不適用' },
+  { id: 'scale', label: '量表' },
+  { id: 'dropdown', label: '下拉選單' },
+  { id: 'choice', label: '選擇題' },
+  { id: 'file', label: '檔案上傳' },
+]
+
 function PresetValueInput({
   field,
   options,
@@ -75,11 +111,7 @@ function PresetValueInput({
     if (field.yesNoAllowNa !== undefined) {
       const items = yesNoOptions(field.yesNoAllowNa)
       return (
-        <select
-          className="field"
-          value={single}
-          onChange={e => onChange(e.target.value || undefined)}
-        >
+        <select className="field" value={single} onChange={e => onChange(e.target.value || undefined)}>
           <option value="">未設定</option>
           {items.map(option => (
             <option key={option.value} value={option.value}>
@@ -89,14 +121,11 @@ function PresetValueInput({
         </select>
       )
     }
-
     const active = options.filter(o => o.status !== 'deprecated')
-
     if (field.multiple) {
       const selected = Array.isArray(field.presetValue) ? field.presetValue : []
       return (
         <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-300 p-2">
-          {active.length === 0 && <p className="hint px-1 py-1">這個標準選項還沒有選項</p>}
           {active.map(option => (
             <label key={option.value} className="flex cursor-pointer items-center gap-2 text-sm">
               <input
@@ -117,13 +146,8 @@ function PresetValueInput({
         </div>
       )
     }
-
     return (
-      <select
-        className="field"
-        value={single}
-        onChange={e => onChange(e.target.value || undefined)}
-      >
+      <select className="field" value={single} onChange={e => onChange(e.target.value || undefined)}>
         <option value="">未設定</option>
         {active.map(option => (
           <option key={option.value} value={option.value}>
@@ -137,11 +161,7 @@ function PresetValueInput({
   if (field.type === 'scale') {
     const items = resolveScaleValueLabels(field)
     return (
-      <select
-        className="field"
-        value={single}
-        onChange={e => onChange(e.target.value || undefined)}
-      >
+      <select className="field" value={single} onChange={e => onChange(e.target.value || undefined)}>
         <option value="">未設定</option>
         {items.map(option => (
           <option key={option.value} value={option.value}>
@@ -208,11 +228,20 @@ function FormBuilder() {
   const [managerGroups, setManagerGroups] = useState<string[]>([])
   const [fillAccessType, setFillAccessType] = useState<FillAccessType>('allOrgUsers')
   const [fillGroups, setFillGroups] = useState<string[]>([])
-  const [fields, setFields] = useState<FieldDefinition[]>([])
+  const [requiresSubmissionTitle, setRequiresSubmissionTitle] = useState(false)
+  const [fields, setFields] = useState<DraftField[]>([])
   const [legacyWarning, setLegacyWarning] = useState('')
+
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [poolMobileOpen, setPoolMobileOpen] = useState(false)
+  const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null)
+  const [mannerMenuOpen, setMannerMenuOpen] = useState(false)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [matrixPoints, setMatrixPoints] = useState<ScalePoints>(5)
   const [matrixLabels, setMatrixLabels] = useState('')
   const [matrixError, setMatrixError] = useState('')
+  const keyInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     const boot = async () => {
@@ -233,7 +262,9 @@ function FormBuilder() {
           setManagerGroups(template.managerGroups || [])
           setFillAccessType(template.fillAccessType || 'allOrgUsers')
           setFillGroups(template.fillGroups || [])
-          setFields(template.fields.map((f, i) => ({ ...f, order: i })))
+          const requiresTitle = !!template.requiresSubmissionTitle
+          setRequiresSubmissionTitle(requiresTitle)
+          setFields(markSubmissionTitleFields(toDraftFields(template.fields), requiresTitle))
           const legacy = findLegacyDateKeyUsage([template])
           if (legacy.length > 0) {
             setLegacyWarning(
@@ -250,6 +281,14 @@ function FormBuilder() {
     boot()
   }, [sourceId, editId, copyId])
 
+  useEffect(() => {
+    if (!expandedId) return
+    const field = fields.find(f => f.clientId === expandedId)
+    if (field?.needsKey) {
+      requestAnimationFrame(() => keyInputRef.current?.focus())
+    }
+  }, [expandedId, fields])
+
   const masterSets = useMemo(() => optionSets.filter(os => os.isMaster), [optionSets])
   const moduleItems = useMemo(
     () => masterSets.find(os => os.code === MODULE_CODE)?.items || [],
@@ -264,26 +303,15 @@ function FormBuilder() {
     [masterSets]
   )
 
-  const pickerStandards = useMemo(() => activeStandardsForPicker(standardKeys), [standardKeys])
+  const poolItems = useMemo(
+    () => buildQuestionPool(standardKeys, optionSets),
+    [standardKeys, optionSets]
+  )
 
-  // 未升格為標準的 optionSet code（避免與標準資料雙入口）
-  const optionSetKeys: KeyChoice[] = useMemo(() => {
-    const seen = new Set<string>()
-    const masters = masterSets
-      .filter(os => os.code !== MODULE_CODE && os.code !== ACTION_CODE && os.code !== MANAGER_GROUP_CODE)
-      .filter(os => (seen.has(os.code) ? false : (seen.add(os.code), true)))
-    const allowed = new Set(
-      optionSetCodesWithoutStandard(
-        masters.map(m => m.code),
-        standardKeys
-      )
-    )
-    return masters
-      .filter(os => allowed.has(os.code))
-      .map(os => ({ key: os.code, type: 'dropdown' as const, label: os.name }))
-  }, [masterSets, standardKeys])
-
-  const usedKeys = new Set(fields.map(f => f.key))
+  const usedKeys = useMemo(
+    () => new Set(fields.map(f => f.key).filter(Boolean)),
+    [fields]
+  )
 
   const standardByKey = useMemo(() => {
     const map = new Map<string, StandardKey>()
@@ -291,50 +319,40 @@ function FormBuilder() {
     return map
   }, [standardKeys])
 
-  const addField = () =>
-    setFields(prev => [
-      ...prev,
-      { key: '', type: 'text', label: '', required: false, order: prev.length },
-    ])
-
-  const addMatrixFields = () => {
-    setMatrixError('')
-    const result = expandScaleMatrixFields(
-      matrixLabels.split('\n'),
-      matrixPoints,
-      fields.map(f => f.key),
-      fields.length
-    )
-    if ('error' in result) {
-      setMatrixError(result.error)
-      return
-    }
-    setFields(prev => [...prev, ...result])
-    setMatrixLabels('')
-  }
-
-  const updateField = (index: number, patch: Partial<FieldDefinition>) =>
+  const updateField = (index: number, patch: Partial<DraftField>) =>
     setFields(prev =>
       prev.map((field, i) => {
         if (i !== index) return field
 
-        const bound = findStandardByKey(standardKeys, field.key)
+        if (isSubmissionTitleField(field)) {
+          const allowed: Partial<DraftField> = {}
+          if (patch.label !== undefined) allowed.label = patch.label
+          if (patch.helpText !== undefined) allowed.helpText = patch.helpText
+          return { ...field, ...allowed }
+        }
 
-        // 已綁標準（含 deprecated）：忽略契約相關 patch；optionSet 僅允許同 code 子集
-        if (bound && patch.key === undefined) {
-          const locked: Partial<FieldDefinition> = { ...patch }
-          delete locked.type
-          delete locked.scalePoints
-          delete locked.scaleValueLabels
-          delete locked.yesNoAllowNa
-          if (locked.optionSetId !== undefined) {
-            const set = optionSets.find(os => os.id === locked.optionSetId)
-            if (!set || set.code !== field.key) delete locked.optionSetId
+        const locked = isContractLockedField(field, standardKeys)
+
+        if (locked && patch.key === undefined) {
+          const nextPatch: Partial<DraftField> = { ...patch }
+          delete nextPatch.type
+          delete nextPatch.scalePoints
+          delete nextPatch.scaleValueLabels
+          delete nextPatch.yesNoAllowNa
+          if (nextPatch.optionSetId !== undefined) {
+            const set = optionSets.find(os => os.id === nextPatch.optionSetId)
+            const bound = field.optionSetId
+              ? optionSets.find(os => os.id === field.optionSetId)
+              : null
+            if (!set || (bound && set.code !== bound.code)) {
+              delete nextPatch.optionSetId
+            }
           }
-          const next = { ...field, ...locked }
-          if (locked.optionSetId !== undefined || locked.multiple !== undefined) {
+          const next = { ...field, ...nextPatch }
+          if (nextPatch.optionSetId !== undefined || nextPatch.multiple !== undefined) {
             next.presetValue = undefined
           }
+          if (next.key.trim()) next.needsKey = false
           return next
         }
 
@@ -342,37 +360,35 @@ function FormBuilder() {
         if (patch.key !== undefined) {
           const standard = findStandardByKey(standardKeys, patch.key)
           if (standard) {
-            next = applyStandardToField(field, standard)
-          } else {
+            next = {
+              ...applyStandardLike(field, standard),
+              clientId: field.clientId,
+              contractLocked: true,
+              templateDefaultKey: standard.key,
+              needsKey: false,
+            }
+          } else if (FIXED_KEYS[patch.key]) {
             const fixed = FIXED_KEYS[patch.key]
-            if (fixed) {
-              next.type = fixed.type
-              next.optionSetId = undefined
-              next.multiple = undefined
-              next.scaleValueLabels = undefined
-              next.yesNoAllowNa = undefined
-              if (fixed.type === 'scale') {
-                next.scalePoints = isValidScalePoints(next.scalePoints) ? next.scalePoints : 5
-              } else {
-                next.scalePoints = undefined
-              }
+            next.type = fixed.type
+            next.optionSetId = undefined
+            next.multiple = undefined
+            next.scaleValueLabels = undefined
+            next.yesNoAllowNa = undefined
+            if (fixed.type === 'scale') {
+              next.scalePoints = isValidScalePoints(next.scalePoints) ? next.scalePoints : 5
             } else {
-              next.type = field.type === 'choice' ? 'choice' : 'dropdown'
-              next.optionSetId = optionSets.find(os => os.code === patch.key && os.isMaster)?.id
               next.scalePoints = undefined
-              next.scaleValueLabels = undefined
-              next.yesNoAllowNa = undefined
             }
-            if (!next.label.trim()) {
-              next.label = fixed?.label || optionSets.find(os => os.code === patch.key)?.name || ''
-            }
+            if (!next.label.trim()) next.label = fixed.label
             next.presetValue = undefined
             if (!canPresetFieldType(next.type)) next.inputMode = undefined
+            next.needsKey = false
+          } else {
+            next.needsKey = !patch.key.trim()
           }
         }
 
-        // 非標準欄位才允許改 type／刻度
-        if (!findStandardByKey(standardKeys, next.key)) {
+        if (!isContractLockedField(next, standardKeys)) {
           if (patch.type === 'scale') {
             next.optionSetId = undefined
             next.multiple = undefined
@@ -383,34 +399,98 @@ function FormBuilder() {
           if (patch.type === 'choice' || patch.type === 'dropdown') {
             next.scalePoints = undefined
             next.scaleValueLabels = undefined
-            next.yesNoAllowNa = undefined
-            if (!next.optionSetId && next.key) {
-              next.optionSetId = optionSets.find(os => os.code === next.key && os.isMaster)?.id
-            }
-          }
-          if (
-            patch.optionSetId !== undefined ||
-            patch.multiple !== undefined ||
-            patch.scalePoints !== undefined
-          ) {
-            next.presetValue = undefined
+            if (patch.type === 'dropdown') next.yesNoAllowNa = undefined
           }
         }
         return next
       })
     )
 
-  const removeField = (index: number) =>
-    setFields(prev => prev.filter((_, i) => i !== index).map((f, i) => ({ ...f, order: i })))
+  function applyStandardLike(field: DraftField, standard: StandardKey): DraftField {
+    const next: DraftField = {
+      ...field,
+      key: standard.key,
+      type: standard.type,
+      optionSetId: undefined,
+      multiple: undefined,
+      scalePoints: undefined,
+      scaleValueLabels: undefined,
+      yesNoAllowNa: undefined,
+      presetValue: undefined,
+    }
+    if (!next.label.trim()) next.label = standard.defaultLabel
+    if (standard.valueModel === 'optionSet') next.optionSetId = standard.optionSetId
+    if (standard.valueModel === 'scale') {
+      next.scalePoints = standard.scalePoints
+      next.scaleValueLabels = standard.scaleValueLabels
+        ? standard.scaleValueLabels.map(l => ({ ...l }))
+        : undefined
+    }
+    if (standard.valueModel === 'yesNo') {
+      next.yesNoAllowNa = standard.allowNa
+      next.multiple = undefined
+    }
+    if (!canPresetFieldType(next.type)) next.inputMode = undefined
+    return next
+  }
 
-  const moveField = (index: number, delta: -1 | 1) => {
-    const target = index + delta
+  const removeField = (index: number) => {
+    setFields(prev => {
+      if (isSubmissionTitleField(prev[index])) return prev
+      const removed = prev[index]
+      if (removed && expandedId === removed.clientId) setExpandedId(null)
+      return prev.filter((_, i) => i !== index).map((f, i) => ({ ...f, order: i }))
+    })
+  }
+
+  const moveField = (index: number, target: number) => {
     if (target < 0 || target >= fields.length) return
     setFields(prev => {
+      if (isSubmissionTitleField(prev[index])) return prev
+      let to = target
+      if (requiresSubmissionTitle && to === 0) to = 1
       const next = [...prev]
-      ;[next[index], next[target]] = [next[target], next[index]]
+      const [item] = next.splice(index, 1)
+      next.splice(to, 0, item)
       return next.map((f, i) => ({ ...f, order: i }))
     })
+  }
+
+  const handleRequiresSubmissionTitle = (next: boolean) => {
+    setRequiresSubmissionTitle(next)
+    setFields(prev => syncFieldsWithSubmissionTitle(prev, next))
+    if (next) setExpandedId(null)
+  }
+
+  const addFromPool = (item: QuestionPoolItem) => {
+    const draft = fieldFromPoolItem(item, usedKeys, fields.length)
+    setFields(prev => [...prev, draft])
+    setExpandedId(draft.clientId)
+    setSelectedPoolId(null)
+  }
+
+  const addFromManner = (manner: MannerChoice) => {
+    const draft = blankFieldFromManner(manner, fields.length)
+    setFields(prev => [...prev, draft])
+    setExpandedId(draft.clientId)
+    setMannerMenuOpen(false)
+  }
+
+  const addMatrixFields = () => {
+    setMatrixError('')
+    const result = expandScaleMatrixFields(
+      matrixLabels.split('\n'),
+      matrixPoints,
+      fields.map(f => f.key).filter(Boolean),
+      fields.length
+    )
+    if ('error' in result) {
+      setMatrixError(result.error)
+      return
+    }
+    const drafts = toDraftFields(result).map(f => ({ ...f, contractLocked: false }))
+    setFields(prev => [...prev, ...drafts])
+    setMatrixLabels('')
   }
 
   const problems = useMemo(() => {
@@ -418,23 +498,38 @@ function FormBuilder() {
     if (!name.trim()) list.push('請填表格名稱')
     if (!moduleId) list.push('請選分類（module）')
     if (!actionId) list.push('請選動作（action）')
-    if (fields.length === 0) list.push('至少要有一個欄位')
-    if (fields.some(f => !f.key)) list.push('每個欄位都要選 KEY')
-    if (fields.some(f => !f.label.trim())) list.push('每個欄位都要有顯示名稱')
+    if (fields.length === 0) list.push('至少要有一個問題')
+    const titleErr = validateSubmissionTitleSetup(stripDraft(fields), requiresSubmissionTitle)
+    if (titleErr) list.push(titleErr)
+    if (fields.some(f => !f.key.trim() || f.needsKey)) {
+      list.push('每個問題都要有有效的系統 KEY（碰撞後請設定新 KEY）')
+    }
+    for (let index = 0; index < fields.length; index++) {
+      const field = fields[index]
+      if (!field.key.trim()) continue
+      const keyErr = validateTemplateFieldKey(field.key)
+      if (keyErr) list.push(`問題「${field.label || field.key}」：${keyErr}`)
+      if (isKeyUsedInForm(field.key, fields, index)) {
+        list.push(`系統 KEY「${field.key}」不可重複`)
+      }
+    }
+    if (fields.some(f => !f.label.trim())) list.push('每個問題都要有顯示名稱')
     if (fields.some(f => fieldUsesOptionSet(f) && !f.optionSetId)) {
-      list.push('下拉／選擇題欄位要選一個標準選項')
+      list.push('下拉／選擇題要選一個標準選項')
     }
     if (fields.some(f => isYesNoField(f) && typeof f.yesNoAllowNa !== 'boolean')) {
-      list.push('是/否欄位缺少答案契約 snapshot')
+      list.push('是/否問題缺少答案契約')
     }
     if (fields.some(f => f.type === 'scale' && !isValidScalePoints(f.scalePoints))) {
-      list.push('量表欄位要選刻度點數（3／4／5／10／100）')
+      list.push('量表要選刻度點數（3／4／5／10／100）')
     }
-    if (new Set(fields.map(f => f.key)).size !== fields.length) list.push('同一個 KEY 只能用一次')
     if (fillAccessType === 'groups' && fillGroups.length === 0) {
       list.push('填報權限設為指定群組時，至少要選一個群組')
     }
-    if (findLegacyDateKeyUsage([{ id: 'draft', name, fields } as Template]).length > 0) {
+    if (
+      findLegacyDateKeyUsage([{ id: 'draft', name, fields: stripDraft(fields) } as Template])
+        .length > 0
+    ) {
       list.push('請移除已退役的日期 KEY，改用語意化日期／時間 KEY')
     }
     for (const field of fields) {
@@ -443,9 +538,7 @@ function FormBuilder() {
 
       if (fieldUsesOptionSet(field) && field.optionSetId) {
         const set = optionSets.find(os => os.id === field.optionSetId)
-        if (set && set.code !== field.key) {
-          list.push(`「${field.label || field.key}」的標準選項 code 必須等於 KEY`)
-        }
+        if (!set) list.push(`「${field.label || field.key}」的標準選項不存在`)
       }
 
       const standard = standardByKey.get(field.key)
@@ -470,47 +563,29 @@ function FormBuilder() {
       }
     }
     return list
-  }, [name, moduleId, actionId, fields, fillAccessType, fillGroups, optionSets, standardByKey])
+  }, [name, moduleId, actionId, fields, fillAccessType, fillGroups, requiresSubmissionTitle, optionSets, standardByKey])
 
-  // 非阻擋的提醒
   const warnings = useMemo(() => {
     const list: string[] = []
     for (const field of fields) {
       const mode = field.inputMode ?? 'open'
       if (mode === 'open') continue
-
       if (shouldWarnOnPreset(field.type)) {
         list.push(`「${field.label || field.key}」寫死一個日期／時間，除了固定年度之類的情況通常是錯的`)
       }
-
-      if (fieldUsesOptionSet(field) && !isPresetEmpty(field.presetValue)) {
-        const items = optionSets.find(os => os.id === field.optionSetId)?.items || []
-        const picked = Array.isArray(field.presetValue) ? field.presetValue : [field.presetValue!]
-        for (const value of picked) {
-          const item = items.find(i => i.value === value)
-          if (!item) {
-            list.push(`「${field.label || field.key}」的預填值「${value}」不在所選的選項清單裡`)
-          } else if (item.status === 'deprecated') {
-            list.push(`「${field.label || field.key}」的預填值「${item.label}」已停用`)
-          }
-        }
-      }
-
-      if (mode === 'locked' && !field.required && isPresetEmpty(field.presetValue)) {
-        list.push(
-          `「${field.label || field.key}」鎖定為空白，每一筆都會是空的；若不需要收集，建議直接移除這個欄位`
-        )
-      }
     }
     return list
-  }, [fields, optionSets])
+  }, [fields])
 
   const handleSave = async () => {
-    if (problems.length > 0) return
+    if (problems.length > 0 || !email) return
+    // Never persist empty/invalid keys
+    if (fields.some(f => !f.key.trim() || validateTemplateFieldKey(f.key))) return
+
     setSaving(true)
     setError('')
     try {
-      const input = {
+      const payload = {
         name,
         moduleId,
         actionId,
@@ -519,13 +594,16 @@ function FormBuilder() {
         managerGroups,
         fillAccessType,
         fillGroups,
-        fields,
+        requiresSubmissionTitle,
+        fields: stripDraft(fields),
       }
       if (editId && source) {
-        const fieldsChanged = JSON.stringify(source.fields) !== JSON.stringify(fields)
-        await updateTemplate(editId, input, source.version, fieldsChanged)
+        const fieldsChanged =
+          JSON.stringify(source.fields) !== JSON.stringify(payload.fields) ||
+          !!source.requiresSubmissionTitle !== requiresSubmissionTitle
+        await updateTemplate(editId, payload, source.version, fieldsChanged)
       } else {
-        await createTemplate(input, email)
+        await createTemplate(payload, email)
       }
       router.push('/forms')
     } catch (err) {
@@ -539,537 +617,617 @@ function FormBuilder() {
   const needsSeed = moduleItems.length === 0 || actionItems.length === 0
 
   return (
-    <>
-      <Link href="/forms" className="btn-ghost btn-sm mb-4 -ml-3">
-        <ArrowLeft className="h-4 w-4" />
-        回表格清單
-      </Link>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Link href="/forms" className="btn-ghost btn-sm">
+            ← 回表格清單
+          </Link>
+          <h1 className="text-lg font-semibold">
+            {editId ? '編輯表格' : copyId ? '複製表格' : '建立表格'}
+          </h1>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn-secondary btn-sm lg:hidden"
+            onClick={() => setPoolMobileOpen(true)}
+          >
+            題庫
+          </button>
+          {editId && (
+            <Link href={`/submit?templateId=${editId}`} className="btn-secondary btn-sm" target="_blank">
+              預覽
+            </Link>
+          )}
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Settings className="h-4 w-4" />
+            表單設定
+          </button>
+          <button
+            type="button"
+            className="btn-primary btn-sm"
+            onClick={handleSave}
+            disabled={saving || problems.length > 0}
+          >
+            {saving ? '儲存中…' : editId ? '儲存' : '建立表格'}
+          </button>
+        </div>
+      </div>
 
-      <PageHeader
-        title={editId ? '編輯表格' : copyId ? '複製表格' : '建立表格'}
-        description={
-          editId
-            ? '改欄位會讓版本 +1，已提交的資料帶著舊版本快照，不受影響。'
-            : '挑 Universal KEY 決定收什麼，取顯示名稱決定怎麼稱呼它。'
-        }
-      />
-
-      {error && <ErrorBanner message={error} />}
-      {legacyWarning && <ErrorBanner message={legacyWarning} />}
-
+      {error && (
+        <div className="mb-3 shrink-0">
+          <ErrorBanner message={error} />
+        </div>
+      )}
+      {legacyWarning && (
+        <div className="mb-3 shrink-0">
+          <ErrorBanner message={legacyWarning} />
+        </div>
+      )}
       {needsSeed && (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          分類（module）或動作（action）標準選項還是空的，先去
+        <div className="mb-3 shrink-0 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          分類或動作標準選項還是空的，請先到
           <Link href="/options" className="mx-1 font-medium underline">
             標準選項
           </Link>
-          補上選項。
+          補上。
         </div>
       )}
 
-      <div className="space-y-5">
-        <section className="card space-y-4 p-6">
-          <h2 className="font-semibold">基本資訊</h2>
+      <div className="flex min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <QuestionPoolPanel
+          items={poolItems}
+          usedKeys={usedKeys}
+          selectedId={selectedPoolId}
+          onSelect={setSelectedPoolId}
+          onAdd={addFromPool}
+          mobileOpen={poolMobileOpen}
+          onMobileClose={() => setPoolMobileOpen(false)}
+        />
 
-          <div>
-            <label className="label mb-1">表格名稱</label>
+        <div className="min-w-0 flex-1 overflow-y-auto bg-slate-100 px-4 py-5 sm:px-6">
+          {/* Centered canvas — Google Forms–like column width */}
+          <div className="mx-auto w-full max-w-2xl">
+          {/* Form title block — Google Forms primary */}
+          <section className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <label className="label mb-1">表單名稱</label>
             <input
-              className="field"
+              className="field text-lg font-medium"
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="例：營會登記表"
             />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label className="label mb-1">分類 module</label>
-              <select className="field" value={moduleId} onChange={e => setModuleId(e.target.value)}>
-                <option value="">請選擇…</option>
-                {moduleItems.map(item => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="label mb-1">動作 action</label>
-              <select className="field" value={actionId} onChange={e => setActionId(e.target.value)}>
-                <option value="">請選擇…</option>
-                {actionItems.map(item => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="label mb-1">說明</label>
-            <input
+            <label className="label mb-1 mt-4">表單說明</label>
+            <textarea
               className="field"
+              rows={2}
               value={description}
               onChange={e => setDescription(e.target.value)}
-              placeholder="填這張表要做什麼"
+              placeholder="填這張表要做什麼（選填）"
             />
-          </div>
+          </section>
 
-          <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              className="rounded text-unicorn-600 focus:ring-unicorn-500"
-              checked={enabled}
-              onChange={e => setEnabled(e.target.checked)}
-            />
-            啟用（出現在填報中心）
-          </label>
-        </section>
+          {/* Bird's-eye question list */}
+          <div className="space-y-1">
+            {fields.map((field, index) => {
+              const expanded = expandedId === field.clientId
+              const zebra = index % 2 === 0 ? 'bg-slate-50' : 'bg-white'
+              const submissionTitle = isSubmissionTitleField(field)
+              const locked = submissionTitle || isContractLockedField(field, standardKeys)
+              const relevantSets = optionSetsForField(field, optionSets)
+              const boundStandard = submissionTitle ? undefined : standardByKey.get(field.key)
 
-        <section className="card space-y-4 p-6">
-          <h2 className="font-semibold">權限設定</h2>
-
-          <div>
-            <label className="label mb-2">誰可以填這張表？</label>
-            <div className="space-y-2">
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="fillAccessType"
-                  className="text-unicorn-600 focus:ring-unicorn-500"
-                  checked={fillAccessType === 'allOrgUsers'}
-                  onChange={() => setFillAccessType('allOrgUsers')}
-                />
-                所有 @dbyv.org 使用者
-              </label>
-              <label className="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="fillAccessType"
-                  className="text-unicorn-600 focus:ring-unicorn-500"
-                  checked={fillAccessType === 'groups'}
-                  onChange={() => setFillAccessType('groups')}
-                />
-                僅指定群組
-              </label>
-            </div>
-            {fillAccessType === 'groups' && (
-              <div className="mt-3 flex flex-wrap gap-4">
-                {managerGroupItems.length === 0 ? (
-                  <div className="text-sm text-amber-700">請先到「權限管理」建立管理群組。</div>
-                ) : (
-                  managerGroupItems.map(item => (
-                    <label
-                      key={`fill-${item.value}`}
-                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-slate-50"
-                    >
-                      <input
-                        type="checkbox"
-                        className="rounded text-unicorn-600 focus:ring-unicorn-500"
-                        checked={fillGroups.includes(item.value)}
-                        onChange={e =>
-                          setFillGroups(prev =>
-                            e.target.checked
-                              ? [...prev, item.value]
-                              : prev.filter(v => v !== item.value)
-                          )
-                        }
-                      />
-                      {item.label}
-                    </label>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <label className="label mb-2">
-              哪些管理群組可以看這張表的資料？
-              <span className="block text-xs font-normal text-slate-500 mt-1">
-                管理群組可讀取他人提交，但不能更正或作廢他人紀錄。未勾選時僅 Superuser 與填表人可見。
-              </span>
-            </label>
-            {managerGroupItems.length === 0 ? (
-              <div className="text-sm text-amber-700 bg-amber-50 rounded-lg p-3 border border-amber-200">
-                尚未建立管理群組。請先到「權限管理」建立群組後，再設定此表的管理員。
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-4">
-                {managerGroupItems.map(item => (
-                  <label key={item.value} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-slate-50 px-2 py-1 rounded">
-                    <input
-                      type="checkbox"
-                      className="rounded text-unicorn-600 focus:ring-unicorn-500"
-                      checked={managerGroups.includes(item.value)}
-                      onChange={e =>
-                        setManagerGroups(prev =>
-                          e.target.checked
-                            ? [...prev, item.value]
-                            : prev.filter(v => v !== item.value)
-                        )
-                      }
-                    />
-                    {item.label}
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="card space-y-3 p-6">
-          <h2 className="font-semibold">矩陣批次（量表）</h2>
-          <p className="hint">
-            一次加入多題扁平量表欄位，共用同一刻度。每列一個題目名稱；系統自動分配 rating KEY。
-            {SCALE_DIRECTION_HINT}
-          </p>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div>
-              <label className="label mb-1 text-xs">刻度點數</label>
-              <select
-                className="field"
-                value={matrixPoints}
-                onChange={e => setMatrixPoints(Number(e.target.value) as ScalePoints)}
-              >
-                {SCALE_POINTS_OPTIONS.map(n => (
-                  <option key={n} value={n}>
-                    {n} 點
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="sm:col-span-2">
-              <label className="label mb-1 text-xs">題目（一行一題）</label>
-              <textarea
-                className="field"
-                rows={3}
-                value={matrixLabels}
-                onChange={e => setMatrixLabels(e.target.value)}
-                placeholder={'喜歡午餐嗎？\n喜歡晚餐嗎？'}
-              />
-            </div>
-          </div>
-          {matrixError && <p className="text-sm text-red-600">{matrixError}</p>}
-          <button type="button" className="btn-secondary btn-sm" onClick={addMatrixFields}>
-            <Plus className="h-4 w-4" />
-            加入矩陣題
-          </button>
-        </section>
-
-        <section className="card space-y-3 p-6">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">欄位</h2>
-            <span className="hint">{fields.length} 個</span>
-          </div>
-
-          {fields.map((field, index) => {
-            const relevantSets = optionSets.filter(os => os.code === field.key)
-            const boundStandard = standardByKey.get(field.key)
-            const contractLocked = !!boundStandard
-            return (
-              <div key={index} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-unicorn-600">
-                    欄位 {index + 1}
-                    {boundStandard && (
-                      <span className="ml-2 font-normal text-slate-500">
-                        · 標準問題
-                        {boundStandard.status === 'deprecated' ? '（已停用，仍可編輯此表）' : ''}
-                      </span>
-                    )}
-                  </span>
-                  <div className="flex gap-1">
+              return (
+                <div
+                  key={field.clientId}
+                  className={`rounded-lg border border-slate-200 ${zebra} ${
+                    submissionTitle ? 'ring-1 ring-unicorn-100' : ''
+                  }`}
+                  draggable={!expanded && !submissionTitle}
+                  onDragStart={() => setDragIndex(index)}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={() => {
+                    if (dragIndex === null || dragIndex === index) return
+                    moveField(dragIndex, index)
+                    setDragIndex(null)
+                  }}
+                  onDragEnd={() => setDragIndex(null)}
+                >
+                  <div className="flex items-center gap-1 px-2 py-2.5">
                     <button
+                      type="button"
+                      className="btn-ghost btn-sm shrink-0 px-1"
+                      aria-label={expanded ? '收合' : '展開'}
+                      onClick={() => setExpandedId(expanded ? null : field.clientId)}
+                    >
+                      {expanded ? (
+                        <ChevronDown className="h-4 w-4" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4" />
+                      )}
+                    </button>
+                    <span
+                      className="cursor-grab text-slate-300"
+                      title="拖曳排序"
+                      aria-hidden
+                    >
+                      <GripVertical className="h-4 w-4" />
+                    </span>
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => setExpandedId(expanded ? null : field.clientId)}
+                    >
+                      <span className="block truncate text-sm text-slate-800">
+                        {field.label.trim() || '（未命名問題）'}
+                        <span className="ml-2 font-mono text-xs text-slate-500">
+                          · {field.key.trim() || '（未設定 KEY）'}
+                        </span>
+                        <span className="ml-2 text-xs text-slate-400">
+                          · {answerFormatLabel(field)}
+                        </span>
+                        {locked && !submissionTitle && (
+                          <span className="ml-2 text-xs text-unicorn-600">標準契約</span>
+                        )}
+                        {submissionTitle && (
+                          <span className="ml-2 text-xs text-unicorn-600">資料項目名稱 🔒</span>
+                        )}
+                        {field.needsKey && (
+                          <span className="ml-2 text-xs text-amber-700">需新 KEY</span>
+                        )}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
                       className="btn-ghost btn-sm"
-                      onClick={() => moveField(index, -1)}
-                      disabled={index === 0}
+                      aria-label="上移"
+                      disabled={index === 0 || (requiresSubmissionTitle && index === 1)}
+                      onClick={() => moveField(index, index - 1)}
                     >
                       <ArrowUp className="h-3.5 w-3.5" />
                     </button>
                     <button
+                      type="button"
                       className="btn-ghost btn-sm"
-                      onClick={() => moveField(index, 1)}
+                      aria-label="下移"
                       disabled={index === fields.length - 1}
+                      onClick={() => moveField(index, index + 1)}
                     >
                       <ArrowDown className="h-3.5 w-3.5" />
                     </button>
-                    <button className="btn-ghost btn-sm text-red-500" onClick={() => removeField(index)}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="label mb-1 text-xs">KEY（系統統一）</label>
-                    <select
-                      className="field font-mono"
-                      value={field.key}
-                      onChange={e => updateField(index, { key: e.target.value })}
-                    >
-                      <option value="">選一個 KEY…</option>
-                      <optgroup label="標準問題">
-                        {pickerStandards.map(s => (
-                          <option
-                            key={s.id || s.key}
-                            value={s.key}
-                            disabled={usedKeys.has(s.key) && s.key !== field.key}
-                          >
-                            {s.key} — {s.defaultLabel}
-                          </option>
-                        ))}
-                        {boundStandard &&
-                          boundStandard.status === 'deprecated' &&
-                          !pickerStandards.some(s => s.key === boundStandard.key) && (
-                            <option value={boundStandard.key}>
-                              {boundStandard.key} — {boundStandard.defaultLabel}（已停用）
-                            </option>
-                          )}
-                      </optgroup>
-                      {FIXED_KEY_GROUPS.map(group => (
-                        <optgroup key={group} label={group}>
-                          {Object.entries(FIXED_KEYS)
-                            .filter(([, meta]) => meta.group === group)
-                            .map(([key, meta]) => (
-                              <option
-                                key={key}
-                                value={key}
-                                disabled={usedKeys.has(key) && key !== field.key}
-                              >
-                                {key} — {meta.label}
-                              </option>
-                            ))}
-                        </optgroup>
-                      ))}
-                      <optgroup label="標準選項（本表／未升格）">
-                        {optionSetKeys.map(choice => (
-                          <option
-                            key={choice.key}
-                            value={choice.key}
-                            disabled={usedKeys.has(choice.key) && choice.key !== field.key}
-                          >
-                            {choice.key} — {choice.label}
-                          </option>
-                        ))}
-                      </optgroup>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="label mb-1 text-xs">顯示名稱（這張表怎麼叫它）</label>
-                    <input
-                      className="field"
-                      value={field.label}
-                      onChange={e => updateField(index, { label: e.target.value })}
-                      placeholder="例：入營學校"
-                    />
-                  </div>
-                </div>
-
-                {isYesNoField(field) && (
-                  <p className="hint rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                    答案方式：是/否（{field.yesNoAllowNa ? '含不適用' : '二元'}）— 由標準問題鎖定，不使用標準選項
-                  </p>
-                )}
-
-                {fieldUsesOptionSet(field) && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <label className="label mb-1 text-xs">顯示方式</label>
-                      <select
-                        className="field"
-                        value={field.type}
-                        disabled={contractLocked}
-                        onChange={e =>
-                          updateField(index, {
-                            type: e.target.value as 'dropdown' | 'choice',
-                            multiple: field.multiple,
-                          })
-                        }
+                    {!submissionTitle && (
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm text-red-500"
+                        aria-label="刪除"
+                        onClick={() => removeField(index)}
                       >
-                        <option value="dropdown">下拉選單</option>
-                        <option value="choice">選擇題（圓鈕／方框）</option>
-                      </select>
-                      {contractLocked && <p className="hint mt-1">由標準問題鎖定</p>}
-                    </div>
-                    <div>
-                      <label className="label mb-1 text-xs">用哪個選項清單</label>
-                      <select
-                        className="field"
-                        value={field.optionSetId || ''}
-                        onChange={e => updateField(index, { optionSetId: e.target.value })}
-                      >
-                        <option value="">請選擇…</option>
-                        {relevantSets.map(set => (
-                          <option key={set.id} value={set.id}>
-                            {set.name}（{set.items.length} 項）{set.isMaster ? ' · 完整' : ' · 子集'}
-                          </option>
-                        ))}
-                      </select>
-                      {contractLocked && <p className="hint mt-1">僅能選同一 KEY 的完整清單或子集</p>}
-                    </div>
-                    <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm sm:col-span-2">
-                      <input
-                        type="checkbox"
-                        className="rounded text-unicorn-600 focus:ring-unicorn-500"
-                        checked={!!field.multiple}
-                        onChange={e => updateField(index, { multiple: e.target.checked })}
-                      />
-                      可複選
-                    </label>
-                  </div>
-                )}
-
-                {field.type === 'scale' && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <label className="label mb-1 text-xs">刻度點數</label>
-                      <select
-                        className="field"
-                        value={field.scalePoints || 5}
-                        disabled={contractLocked}
-                        onChange={e =>
-                          updateField(index, { scalePoints: Number(e.target.value) as ScalePoints })
-                        }
-                      >
-                        {SCALE_POINTS_OPTIONS.map(n => (
-                          <option key={n} value={n}>
-                            {n} 點
-                          </option>
-                        ))}
-                      </select>
-                      <p className="hint mt-1">
-                        {contractLocked
-                          ? `由標準問題鎖定：${resolveScaleValueLabels(field)
-                              .map(l => `${l.value}=${l.label}`)
-                              .join('／')}`
-                          : SCALE_DIRECTION_HINT}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="label mb-1 text-xs">提示文字</label>
-                    <input
-                      className="field"
-                      value={field.helpText || ''}
-                      onChange={e => updateField(index, { helpText: e.target.value })}
-                      placeholder="選填"
-                    />
-                  </div>
-                  <label className="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm">
-                    <input
-                      type="checkbox"
-                      className="rounded text-unicorn-600 focus:ring-unicorn-500"
-                      checked={field.required}
-                      onChange={e => updateField(index, { required: e.target.checked })}
-                    />
-                    必答（不接受空白）
-                  </label>
-                </div>
-
-                {canPresetFieldType(field.type) && (
-                  <div className="rounded-lg border border-slate-200 bg-white p-3">
-                    <label className="label mb-2 text-xs">輸入方式</label>
-                    <div className="flex flex-wrap gap-4">
-                      {(
-                        [
-                          ['open', '照常提問'],
-                          ['default', '預填值，可改'],
-                          ['locked', '預填值，鎖定'],
-                        ] as Array<[FieldInputMode, string]>
-                      ).map(([mode, label]) => (
-                        <label
-                          key={mode}
-                          className="flex cursor-pointer items-center gap-2 text-sm"
-                        >
-                          <input
-                            type="radio"
-                            name={`inputMode-${index}`}
-                            className="text-unicorn-600 focus:ring-unicorn-500"
-                            checked={(field.inputMode ?? 'open') === mode}
-                            onChange={() => updateField(index, { inputMode: mode })}
-                          />
-                          {label}
-                        </label>
-                      ))}
-                    </div>
-
-                    {(field.inputMode ?? 'open') !== 'open' && (
-                      <div className="mt-3">
-                        <label className="label mb-1 text-xs">
-                          預填值
-                          {field.inputMode === 'locked' && !field.required && (
-                            <span className="ml-1 font-normal text-slate-400">
-                              （可留空，代表鎖定為空白）
-                            </span>
-                          )}
-                        </label>
-                        <PresetValueInput
-                          field={field}
-                          options={
-                            optionSets.find(os => os.id === field.optionSetId)?.items || []
-                          }
-                          onChange={value => updateField(index, { presetValue: value })}
-                        />
-                      </div>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     )}
                   </div>
-                )}
 
-                <p className="hint">
-                  型別：{field.type}
-                  {field.key && `　·　存進已填的表格的欄位名稱：${field.key}`}
-                </p>
+                  {expanded && (
+                    <div className="space-y-3 border-t border-slate-200 px-4 py-4">
+                      {submissionTitle && (
+                        <p className="rounded-lg border border-unicorn-100 bg-unicorn-50 px-3 py-2 text-xs text-unicorn-900">
+                          系統欄位：每筆提交的名稱（KEY=title、必答）。可在表單設定關閉此功能。
+                        </p>
+                      )}
+                      {!submissionTitle && (
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            onClick={() => moveField(index, requiresSubmissionTitle ? 1 : 0)}
+                            disabled={index === 0 || (requiresSubmissionTitle && index === 1)}
+                          >
+                            移至最上
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            onClick={() => moveField(index, fields.length - 1)}
+                            disabled={index === fields.length - 1}
+                          >
+                            移至最下
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <label className="label mb-1 text-xs">
+                            {submissionTitle ? '資料項目名稱（顯示）' : '問題'}
+                          </label>
+                          <input
+                            className="field"
+                            value={field.label}
+                            onChange={e => updateField(index, { label: e.target.value })}
+                            placeholder={submissionTitle ? '例：申請案名稱' : '問題顯示名稱'}
+                          />
+                        </div>
+                        <div>
+                          <label className="label mb-1 text-xs">系統 KEY</label>
+                          <input
+                            ref={field.needsKey ? keyInputRef : undefined}
+                            className="field font-mono"
+                            value={field.key}
+                            disabled={submissionTitle}
+                            readOnly={submissionTitle}
+                            onChange={e =>
+                              updateField(index, {
+                                key: e.target.value.trim(),
+                                needsKey: !e.target.value.trim(),
+                              })
+                            }
+                            placeholder={
+                              field.templateDefaultKey
+                                ? `預設 ${field.templateDefaultKey} 已使用，請設定新 KEY`
+                                : '例：prog_visitNote'
+                            }
+                          />
+                          {field.needsKey && (
+                            <p className="mt-1 text-xs text-amber-700">
+                              ⚠ 請為這個題目設定新的 KEY（勿自動沿用已占用的預設 KEY）
+                            </p>
+                          )}
+                          {boundStandard && (
+                            <p className="mt-1 text-xs text-unicorn-700">
+                              已綁定標準問題「{boundStandard.key}」— 回答契約鎖定
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="label mb-1 text-xs">回答方式</label>
+                        {locked || submissionTitle ? (
+                          <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                            {answerFormatLabel(field)} 🔒
+                            {submissionTitle && (
+                              <span className="mt-1 block text-xs text-slate-500">
+                                提交識別欄位，固定短文字。
+                              </span>
+                            )}
+                            {!submissionTitle &&
+                              (field.type === 'date' ||
+                                field.type === 'time' ||
+                                field.type === 'datetime') && (
+                              <span className="mt-1 block text-xs text-slate-500">
+                                這是回答方式，不是 KEY（例如 startDate 才是系統 KEY）。
+                              </span>
+                            )}
+                          </p>
+                        ) : (
+                          <select
+                            className="field"
+                            value={
+                              isYesNoField(field)
+                                ? field.yesNoAllowNa
+                                  ? 'yesNoNa'
+                                  : 'yesNo'
+                                : field.type
+                            }
+                            onChange={e => {
+                              const v = e.target.value as MannerChoice
+                              if (v === 'yesNo') {
+                                updateField(index, {
+                                  type: 'choice',
+                                  yesNoAllowNa: false,
+                                  optionSetId: undefined,
+                                  scalePoints: undefined,
+                                })
+                              } else if (v === 'yesNoNa') {
+                                updateField(index, {
+                                  type: 'choice',
+                                  yesNoAllowNa: true,
+                                  optionSetId: undefined,
+                                  scalePoints: undefined,
+                                })
+                              } else {
+                                updateField(index, {
+                                  type: v,
+                                  yesNoAllowNa: undefined,
+                                  scalePoints: v === 'scale' ? 5 : undefined,
+                                })
+                              }
+                            }}
+                          >
+                            {MANNER_OPTIONS.map(m => (
+                              <option key={m.id} value={m.id}>
+                                {m.label}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="label mb-1 text-xs">說明文字</label>
+                        <input
+                          className="field"
+                          value={field.helpText || ''}
+                          onChange={e => updateField(index, { helpText: e.target.value })}
+                          placeholder="選填；空白則填表者不顯示"
+                        />
+                      </div>
+
+                      {isYesNoField(field) && (
+                        <p className="hint rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                          答案 VALUE 固定為 是／否
+                          {field.yesNoAllowNa ? '／不適用' : ''}（契約鎖定）
+                        </p>
+                      )}
+
+                      {fieldUsesOptionSet(field) && (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {!locked && (
+                            <div>
+                              <label className="label mb-1 text-xs">顯示方式</label>
+                              <select
+                                className="field"
+                                value={field.type}
+                                onChange={e =>
+                                  updateField(index, {
+                                    type: e.target.value as 'dropdown' | 'choice',
+                                  })
+                                }
+                              >
+                                <option value="dropdown">下拉選單</option>
+                                <option value="choice">選擇題</option>
+                              </select>
+                            </div>
+                          )}
+                          <div className={locked ? 'sm:col-span-2' : ''}>
+                            <label className="label mb-1 text-xs">標準選項</label>
+                            <select
+                              className="field"
+                              value={field.optionSetId || ''}
+                              disabled={locked}
+                              onChange={e => updateField(index, { optionSetId: e.target.value })}
+                            >
+                              <option value="">請選擇…</option>
+                              {relevantSets.map(set => (
+                                <option key={set.id} value={set.id}>
+                                  {set.name}（{set.items.length} 項）
+                                  {set.isMaster ? ' · 完整' : ' · 子集'} · {set.code}
+                                </option>
+                              ))}
+                            </select>
+                            {locked && (
+                              <p className="hint mt-1">選項契約鎖定（optionSetId）；KEY 可與 code 不同</p>
+                            )}
+                          </div>
+                          <label className="flex cursor-pointer items-center gap-2 text-sm sm:col-span-2">
+                            <input
+                              type="checkbox"
+                              className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                              checked={!!field.multiple}
+                              onChange={e => updateField(index, { multiple: e.target.checked })}
+                            />
+                            可複選
+                          </label>
+                        </div>
+                      )}
+
+                      {field.type === 'scale' && (
+                        <div>
+                          <label className="label mb-1 text-xs">刻度點數</label>
+                          <select
+                            className="field"
+                            value={field.scalePoints || 5}
+                            disabled={locked}
+                            onChange={e =>
+                              updateField(index, {
+                                scalePoints: Number(e.target.value) as ScalePoints,
+                              })
+                            }
+                          >
+                            {SCALE_POINTS_OPTIONS.map(n => (
+                              <option key={n} value={n}>
+                                {n} 點
+                              </option>
+                            ))}
+                          </select>
+                          <p className="hint mt-1">
+                            {locked
+                              ? `由標準契約鎖定：${resolveScaleValueLabels(field)
+                                  .map(l => `${l.value}=${l.label}`)
+                                  .join('／')}`
+                              : SCALE_DIRECTION_HINT}
+                          </p>
+                        </div>
+                      )}
+
+                      <label className="flex cursor-pointer items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="rounded text-unicorn-600 focus:ring-unicorn-500"
+                          checked={field.required}
+                          disabled={submissionTitle}
+                          onChange={e => updateField(index, { required: e.target.checked })}
+                        />
+                        必答
+                        {submissionTitle && (
+                          <span className="text-xs text-slate-400">（系統鎖定）</span>
+                        )}
+                      </label>
+
+                      {canPresetFieldType(field.type) && !submissionTitle && (
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <label className="label mb-2 text-xs">輸入方式</label>
+                          <div className="flex flex-wrap gap-4">
+                            {(
+                              [
+                                ['open', '照常提問'],
+                                ['default', '預填值，可改'],
+                                ['locked', '預填值，鎖定'],
+                              ] as Array<[FieldInputMode, string]>
+                            ).map(([mode, label]) => (
+                              <label key={mode} className="flex cursor-pointer items-center gap-2 text-sm">
+                                <input
+                                  type="radio"
+                                  name={`inputMode-${field.clientId}`}
+                                  className="text-unicorn-600 focus:ring-unicorn-500"
+                                  checked={(field.inputMode ?? 'open') === mode}
+                                  onChange={() => updateField(index, { inputMode: mode })}
+                                />
+                                {label}
+                              </label>
+                            ))}
+                          </div>
+                          {(field.inputMode ?? 'open') !== 'open' && (
+                            <div className="mt-3">
+                              <label className="label mb-1 text-xs">預填值</label>
+                              <PresetValueInput
+                                field={field}
+                                options={
+                                  optionSets.find(os => os.id === field.optionSetId)?.items || []
+                                }
+                                onChange={value => updateField(index, { presetValue: value })}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="relative mt-4">
+            <button
+              type="button"
+              className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 py-3 text-sm text-slate-600 transition-colors hover:border-unicorn-400 hover:bg-unicorn-50"
+              onClick={() => setMannerMenuOpen(v => !v)}
+            >
+              <Plus className="h-4 w-4" />
+              新增問題
+            </button>
+            {mannerMenuOpen && (
+              <div className="absolute left-0 right-0 z-20 mt-1 rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                <p className="px-2 py-1 text-xs font-semibold text-slate-500">選擇回答方式</p>
+                <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+                  {MANNER_OPTIONS.map(m => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className="rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50"
+                      onClick={() => addFromManner(m.id)}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            )
-          })}
+            )}
+          </div>
 
-          <button
-            className="w-full rounded-xl border-2 border-dashed border-slate-300 py-3 text-sm
-              text-slate-500 transition-colors hover:border-unicorn-400 hover:bg-unicorn-50"
-            onClick={addField}
-          >
-            <Plus className="mr-1 inline h-4 w-4" />
-            新增欄位
-          </button>
-        </section>
+          <details className="mt-6 rounded-xl border border-slate-200 p-4">
+            <summary className="cursor-pointer text-sm font-medium text-slate-700">
+              矩陣批次（量表）
+            </summary>
+            <div className="mt-3 space-y-3">
+              <p className="hint">
+                一次加入多題扁平量表。{SCALE_DIRECTION_HINT}
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="label mb-1 text-xs">刻度點數</label>
+                  <select
+                    className="field"
+                    value={matrixPoints}
+                    onChange={e => setMatrixPoints(Number(e.target.value) as ScalePoints)}
+                  >
+                    {SCALE_POINTS_OPTIONS.map(n => (
+                      <option key={n} value={n}>
+                        {n} 點
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="label mb-1 text-xs">題目（一行一題）</label>
+                  <textarea
+                    className="field"
+                    rows={3}
+                    value={matrixLabels}
+                    onChange={e => setMatrixLabels(e.target.value)}
+                    placeholder={'喜歡午餐嗎？\n喜歡晚餐嗎？'}
+                  />
+                </div>
+              </div>
+              {matrixError && <p className="text-sm text-red-600">{matrixError}</p>}
+              <button type="button" className="btn-secondary btn-sm" onClick={addMatrixFields}>
+                <Plus className="h-4 w-4" />
+                加入矩陣題
+              </button>
+            </div>
+          </details>
 
-        {problems.length > 0 && (
-          <ul className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
-            {problems.map(problem => (
-              <li key={problem}>· {problem}</li>
-            ))}
-          </ul>
-        )}
+          {problems.length > 0 && (
+            <ul className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
+              {problems.map(problem => (
+                <li key={problem}>· {problem}</li>
+              ))}
+            </ul>
+          )}
+          {problems.length === 0 && warnings.length > 0 && (
+            <ul className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-600">
+              <li className="mb-1 font-medium">提醒（不影響儲存）</li>
+              {warnings.map(warning => (
+                <li key={warning}>· {warning}</li>
+              ))}
+            </ul>
+          )}
 
-        {problems.length === 0 && warnings.length > 0 && (
-          <ul className="rounded-xl border border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-600">
-            <li className="mb-1 font-medium">提醒（不影響儲存）</li>
-            {warnings.map(warning => (
-              <li key={warning}>· {warning}</li>
-            ))}
-          </ul>
-        )}
-
-        <div className="flex justify-end gap-2 pb-6">
-          <Link href="/forms" className="btn-secondary">
-            取消
-          </Link>
-          <button
-            className="btn-primary"
-            onClick={handleSave}
-            disabled={saving || problems.length > 0}
-          >
-            {saving ? '儲存中…' : editId ? '儲存變更' : '建立表格'}
-          </button>
+          <div className="mt-6 flex justify-end gap-2 pb-8">
+            <Link href="/forms" className="btn-secondary">
+              取消
+            </Link>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={handleSave}
+              disabled={saving || problems.length > 0}
+            >
+              {saving ? '儲存中…' : editId ? '儲存變更' : '建立表格'}
+            </button>
+          </div>
+          </div>
         </div>
       </div>
-    </>
+
+      <FormSettingsDrawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        moduleId={moduleId}
+        actionId={actionId}
+        enabled={enabled}
+        requiresSubmissionTitle={requiresSubmissionTitle}
+        fillAccessType={fillAccessType}
+        fillGroups={fillGroups}
+        managerGroups={managerGroups}
+        moduleItems={moduleItems}
+        actionItems={actionItems}
+        managerGroupItems={managerGroupItems}
+        onModuleId={setModuleId}
+        onActionId={setActionId}
+        onEnabled={setEnabled}
+        onRequiresSubmissionTitle={handleRequiresSubmissionTitle}
+        onFillAccessType={setFillAccessType}
+        onFillGroups={setFillGroups}
+        onManagerGroups={setManagerGroups}
+      />
+    </div>
   )
 }
 

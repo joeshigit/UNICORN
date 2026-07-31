@@ -1,0 +1,389 @@
+import {
+  ACTION_CODE,
+  FIXED_KEYS,
+  MANAGER_GROUP_CODE,
+  MODULE_CODE,
+  RATING_KEYS,
+  answerFormatLabel,
+  applyStandardToField,
+  isYesNoField,
+} from '@/lib/keys'
+import type { FieldDefinition, FieldType, OptionSet, StandardKey } from '@/types'
+
+export type PoolGroupId =
+  | 'frequent'
+  | 'standard'
+  | 'optionSet'
+  | 'datetime'
+  | 'file'
+  | 'other'
+
+export interface QuestionPoolItem {
+  id: string
+  groupId: PoolGroupId
+  defaultKey: string
+  label: string
+  type: FieldType
+  formatLabel: string
+  source: 'standardKey' | 'fixed' | 'optionSet'
+  standard?: StandardKey
+  optionSetId?: string
+  yesNoAllowNa?: boolean
+  scalePoints?: FieldDefinition['scalePoints']
+  scaleValueLabels?: FieldDefinition['scaleValueLabels']
+}
+
+/** 常用題庫順序（title 改由表單設定注入，不在題庫） */
+export const FREQUENT_KEY_ORDER = ['school', 'startDate', 'endDate', 'expiryDate'] as const
+
+export const SUBMISSION_TITLE_KEY = 'title'
+
+const FREQUENT_KEYS = new Set<string>(FREQUENT_KEY_ORDER)
+
+/**
+ * Numbered FIXED_KEY slots, rating*, upload*, and title are omitted from the pool.
+ * title is injected via Template.requiresSubmissionTitle (submission identity).
+ */
+const POOL_EXCLUDED_KEYS = new Set<string>([
+  ...RATING_KEYS,
+  SUBMISSION_TITLE_KEY,
+  'text1',
+  'text2',
+  'text3',
+  'text4',
+  'note',
+  'note2',
+  'note3',
+  'quantity1',
+  'quantity2',
+  'quantity3',
+  'quantity4',
+  'quantity5',
+  'amount1',
+  'amount2',
+  'amount3',
+  'upload',
+  'upload2',
+  'upload3',
+  'upload4',
+])
+
+export function isExcludedFromQuestionPool(key: string): boolean {
+  return POOL_EXCLUDED_KEYS.has(key)
+}
+
+export function buildQuestionPool(
+  standardKeys: StandardKey[],
+  optionSets: OptionSet[]
+): QuestionPoolItem[] {
+  const items: QuestionPoolItem[] = []
+  const seen = new Set<string>()
+
+  for (const s of standardKeys) {
+    if (s.status === 'deprecated') continue
+    if (isExcludedFromQuestionPool(s.key)) continue
+    const id = `standard:${s.key}`
+    if (seen.has(s.key)) continue
+    seen.add(s.key)
+    items.push({
+      id,
+      groupId: FREQUENT_KEYS.has(s.key) ? 'frequent' : 'standard',
+      defaultKey: s.key,
+      label: s.defaultLabel,
+      type: s.type,
+      formatLabel: answerFormatLabel({
+        type: s.type,
+        yesNoAllowNa: s.valueModel === 'yesNo' ? s.allowNa : undefined,
+      }),
+      source: 'standardKey',
+      standard: s,
+      optionSetId: s.optionSetId,
+      yesNoAllowNa: s.valueModel === 'yesNo' ? s.allowNa : undefined,
+      scalePoints: s.scalePoints,
+      scaleValueLabels: s.scaleValueLabels,
+    })
+  }
+
+  for (const [key, meta] of Object.entries(FIXED_KEYS)) {
+    if (seen.has(key)) continue
+    if (isExcludedFromQuestionPool(key)) continue
+    seen.add(key)
+    let groupId: PoolGroupId = 'other'
+    if (meta.group === '日期時間') groupId = 'datetime'
+    else if (meta.group === '檔案') groupId = 'file'
+    else if (FREQUENT_KEYS.has(key)) groupId = 'frequent'
+    items.push({
+      id: `fixed:${key}`,
+      groupId: FREQUENT_KEYS.has(key) ? 'frequent' : groupId,
+      defaultKey: key,
+      label: meta.label,
+      type: meta.type,
+      formatLabel: answerFormatLabel({ type: meta.type }),
+      source: 'fixed',
+    })
+  }
+
+  const masters = optionSets.filter(
+    os =>
+      os.isMaster &&
+      os.code !== MODULE_CODE &&
+      os.code !== ACTION_CODE &&
+      os.code !== MANAGER_GROUP_CODE
+  )
+  for (const os of masters) {
+    if (seen.has(os.code)) {
+      // already covered by standard/fixed — still list under optionSet only if not present as optionSet group
+      continue
+    }
+    seen.add(os.code)
+    items.push({
+      id: `optionSet:${os.id}`,
+      groupId: FREQUENT_KEYS.has(os.code) ? 'frequent' : 'optionSet',
+      defaultKey: os.code,
+      label: os.name,
+      type: 'dropdown',
+      formatLabel: '下拉選單',
+      source: 'optionSet',
+      optionSetId: os.id,
+    })
+  }
+
+  const groupRank = (id: PoolGroupId) => POOL_GROUP_ORDER.findIndex(g => g.id === id)
+  const frequentRank = (key: string) => {
+    const i = FREQUENT_KEY_ORDER.indexOf(key as (typeof FREQUENT_KEY_ORDER)[number])
+    return i >= 0 ? i : 999
+  }
+
+  items.sort((a, b) => {
+    const byGroup = groupRank(a.groupId) - groupRank(b.groupId)
+    if (byGroup !== 0) return byGroup
+    if (a.groupId === 'frequent') return frequentRank(a.defaultKey) - frequentRank(b.defaultKey)
+    return a.label.localeCompare(b.label, 'zh-Hant')
+  })
+
+  return items
+}
+
+export const POOL_GROUP_ORDER: Array<{ id: PoolGroupId; label: string }> = [
+  { id: 'frequent', label: '常用' },
+  { id: 'standard', label: '標準問題' },
+  { id: 'optionSet', label: '標準選項' },
+  { id: 'datetime', label: '日期／時間' },
+  { id: 'file', label: '檔案' },
+  { id: 'other', label: '其他固定題目' },
+]
+
+/** Builder-only draft wrapper (never persist clientId / needsKey / contractLocked) */
+export interface DraftField extends FieldDefinition {
+  clientId: string
+  needsKey?: boolean
+  /** Lock type / optionSet / scale / yesNo after template insert */
+  contractLocked?: boolean
+  templateDefaultKey?: string
+  /** System submission-identity field (KEY locked = title) */
+  submissionTitle?: boolean
+}
+
+export function isSubmissionTitleField(
+  field: Pick<DraftField, 'key' | 'submissionTitle'>
+): boolean {
+  return field.submissionTitle === true
+}
+
+export function createSubmissionTitleDraft(): DraftField {
+  return {
+    clientId: newClientId(),
+    key: SUBMISSION_TITLE_KEY,
+    type: 'text',
+    label: FIXED_KEYS[SUBMISSION_TITLE_KEY]?.label || '標題',
+    required: true,
+    order: 0,
+    submissionTitle: true,
+    contractLocked: true,
+  }
+}
+
+/** Ensure requiresSubmissionTitle toggles match fields[0] = locked title. */
+export function syncFieldsWithSubmissionTitle(
+  fields: DraftField[],
+  requires: boolean
+): DraftField[] {
+  if (!requires) {
+    return fields
+      .filter(f => !f.submissionTitle)
+      .map((f, i) => ({ ...f, order: i }))
+  }
+
+  const rest = fields.filter(f => !f.submissionTitle)
+  const adopt = rest.find(f => f.key === SUBMISSION_TITLE_KEY)
+  const others = adopt ? rest.filter(f => f.clientId !== adopt.clientId) : rest
+
+  const titleField: DraftField = adopt
+    ? {
+        ...adopt,
+        key: SUBMISSION_TITLE_KEY,
+        type: 'text',
+        required: true,
+        submissionTitle: true,
+        contractLocked: true,
+        label: adopt.label.trim() || FIXED_KEYS[SUBMISSION_TITLE_KEY]?.label || '標題',
+        optionSetId: undefined,
+        multiple: undefined,
+        scalePoints: undefined,
+        scaleValueLabels: undefined,
+        yesNoAllowNa: undefined,
+      }
+    : createSubmissionTitleDraft()
+
+  return [titleField, ...others].map((f, i) => ({ ...f, order: i }))
+}
+
+export function markSubmissionTitleFields(
+  fields: DraftField[],
+  requires: boolean
+): DraftField[] {
+  if (!requires) {
+    return fields.map(f => ({ ...f, submissionTitle: undefined }))
+  }
+  return syncFieldsWithSubmissionTitle(fields, true)
+}
+
+export function validateSubmissionTitleSetup(
+  fields: FieldDefinition[],
+  requires: boolean
+): string | null {
+  if (!requires) return null
+  if (fields.length === 0) return '啟用「每筆提交需要名稱」時至少要有一個問題'
+  const first = fields[0]
+  if (first.key !== SUBMISSION_TITLE_KEY) {
+    return '「每筆提交需要名稱」時，第一題必須是 KEY=title'
+  }
+  if (first.type !== 'text') return '資料項目名稱（title）必須是短文字'
+  if (!first.required) return '資料項目名稱（title）必須設為必答'
+  const dup = fields.filter(f => f.key === SUBMISSION_TITLE_KEY)
+  if (dup.length > 1) return 'KEY「title」只能出現一次（資料項目名稱）'
+  return null
+}
+
+export function newClientId(): string {
+  return `f_${Math.random().toString(36).slice(2, 10)}`
+}
+
+export function toDraftFields(fields: FieldDefinition[]): DraftField[] {
+  return fields.map((f, i) => ({
+    ...f,
+    order: i,
+    clientId: newClientId(),
+    contractLocked: false,
+  }))
+}
+
+export function stripDraft(fields: DraftField[]): FieldDefinition[] {
+  return fields.map((f, i) => {
+    const {
+      clientId: _c,
+      needsKey: _n,
+      contractLocked: _l,
+      templateDefaultKey: _t,
+      submissionTitle: _s,
+      ...rest
+    } = f
+    return { ...rest, order: i }
+  })
+}
+
+export function fieldFromPoolItem(
+  item: QuestionPoolItem,
+  usedKeys: Set<string>,
+  order: number
+): DraftField {
+  const collision = usedKeys.has(item.defaultKey)
+  const base: FieldDefinition = {
+    key: collision ? '' : item.defaultKey,
+    type: item.type,
+    label: item.label,
+    required: false,
+    order,
+    helpText: undefined,
+    optionSetId: item.optionSetId,
+    yesNoAllowNa: item.yesNoAllowNa,
+    scalePoints: item.scalePoints,
+    scaleValueLabels: item.scaleValueLabels,
+  }
+
+  let field = base
+  if (item.standard && !collision) {
+    field = applyStandardToField(base, item.standard)
+  } else if (item.standard && collision) {
+    // Copy contract without forcing registry KEY
+    field = {
+      ...applyStandardToField(base, item.standard),
+      key: '',
+      label: item.label,
+    }
+  }
+
+  return {
+    ...field,
+    order,
+    clientId: newClientId(),
+    needsKey: collision,
+    contractLocked: true,
+    templateDefaultKey: item.defaultKey,
+  }
+}
+
+export function blankFieldFromManner(
+  manner: FieldType | 'yesNo' | 'yesNoNa',
+  order: number
+): DraftField {
+  const base: DraftField = {
+    clientId: newClientId(),
+    key: '',
+    type: 'text',
+    label: '',
+    required: false,
+    order,
+    needsKey: true,
+    contractLocked: false,
+  }
+
+  if (manner === 'yesNo') {
+    return { ...base, type: 'choice', yesNoAllowNa: false }
+  }
+  if (manner === 'yesNoNa') {
+    return { ...base, type: 'choice', yesNoAllowNa: true }
+  }
+  if (manner === 'scale') {
+    return { ...base, type: 'scale', scalePoints: 5 }
+  }
+  if (manner === 'dropdown' || manner === 'choice') {
+    return { ...base, type: manner }
+  }
+  return { ...base, type: manner }
+}
+
+export function optionSetsForField(
+  field: FieldDefinition,
+  optionSets: OptionSet[]
+): OptionSet[] {
+  if (!field.optionSetId) {
+    return optionSets.filter(
+      os =>
+        os.code !== MODULE_CODE &&
+        os.code !== ACTION_CODE &&
+        os.code !== MANAGER_GROUP_CODE
+    )
+  }
+  const bound = optionSets.find(os => os.id === field.optionSetId)
+  if (!bound) return []
+  return optionSets.filter(os => os.code === bound.code)
+}
+
+export function isContractLockedField(field: DraftField, standardKeys: StandardKey[]): boolean {
+  if (field.contractLocked) return true
+  if (standardKeys.some(s => s.key === field.key)) return true
+  return false
+}
+
+export { answerFormatLabel, isYesNoField }

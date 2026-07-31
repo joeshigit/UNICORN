@@ -39,7 +39,7 @@ export interface ScaleValueLabel {
 }
 
 // ---------- 欄位定義 ----------
-// key 必須是 Universal KEY（FIXED_KEYS、optionSet.code、或 standardKeys.key）
+// key = 表單內實例身分（form-local）。optionSet 契約靠 optionSetId，不必等於 optionSet.code。
 export interface FieldDefinition {
   key: string
   type: FieldType
@@ -68,7 +68,7 @@ export type StandardKeyStatus = 'active' | 'deprecated'
 
 /**
  * Meaning：組織標準 KEY＋答案方式（valueModel，獨立於 optionSets）。
- * - optionSet 型：MVP 要求 key === optionSet.code，答案來自選項池 items
+ * - optionSet 型：名冊建立時 standardKey.key === optionSet.code；建表實例可透過 optionSetId 綁定，field.key 可不同
  * - yesNo 型：答案固定 是/否/(不適用)，不需、也不應建立 optionSet Master
  */
 export interface StandardKey {
@@ -111,6 +111,8 @@ export interface Template {
   /** 填報 ACL：預設全組織；groups 時需屬於 fillGroups */
   fillAccessType?: FillAccessType
   fillGroups?: string[]
+  /** 每筆提交必須有名稱（自動插入 locked KEY=title 第一題） */
+  requiresSubmissionTitle?: boolean
 }
 
 // ---------- UserRole (權限管理) ----------
