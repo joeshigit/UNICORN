@@ -2854,3 +2854,13 @@ export const seedModuleActionOptionSets = functions
       }
     })
   })
+
+// ============================================
+// 🦄 PHASE 1: Google Forms read-only connection
+// ============================================
+export { connectGoogleForm } from './googleForms/config'
+
+// ============================================
+// 🦄 PHASE 1.5: Prefill POC only (no ingest / Answer Workspace)
+// ============================================
+export { proveGoogleFormPrefill } from './googleForms/prefillPoc'
