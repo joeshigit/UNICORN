@@ -207,3 +207,61 @@ Second Forms SDK: NOT INSTALLED
 ## STOP
 
 Await human completion of live steps A–C (or provision of a secrets-capable environment) and explicit approval before Phase 1.5.
+
+---
+
+## Controlled Protocol Re-inspection (same session / follow-up)
+
+**Date:** 2026-07-31 (re-check)  
+**Action:** Inspect repository only. Did **not** recreate Phase 1 code. Did **not** start Phase 1.5.
+
+| Claim from prior Phase Report | Re-check |
+|-------------------------------|----------|
+| `web/src/types/google-forms.ts` exists | CONFIRMED |
+| `functions/src/googleForms/client.ts` + `config.ts` exist | CONFIRMED |
+| `functions/package.json` still `googleapis` only (no `@googleapis/forms`) | CONFIRMED |
+| `connectGoogleForm` exported from `functions/src/index.ts` | CONFIRMED |
+| Staff/Leader/form components unchanged vs `main` | CONFIRMED (empty diff) |
+| No prefill / watches.create / responses.get / batchUpdate / PubSub in googleForms/ | CONFIRMED |
+| Functions `tsc` | PASS |
+| Form ID parse + extract unit tests | PASS (6/6) |
+| `getFormsClient` without SA | PASS (throws `AUTHENTICATION_ERROR`) |
+| `googleapis` has get / responses.get / watches.* / batchUpdate | PASS |
+| Live forms.get / Firestore / deployed CF | still BLOCKED |
+
+### Technical implementation vs live gate
+
+- **Implementation requirements (code):** satisfied for Phase 1 read-only connect.  
+- **Live verification gate:** still BLOCKED pending human deploy + credentials.  
+- Therefore Phase Gate remains: **BLOCKED — HUMAN REVIEW REQUIRED**  
+- Do **not** treat compile success as permission to start Phase 1.5.
+
+### Exact human live checklist (copy/paste)
+
+```bash
+# On a machine with gitignored functions/service-account.json
+cd functions && npm ci && npm run build
+cd .. && firebase deploy --only functions:connectGoogleForm
+
+# Obtain Firebase ID token for Admin/Superuser (joeshi@dbyv.org)
+export ID_TOKEN='...'
+export CF_URL='https://asia-east1-unicorn-dcs.cloudfunctions.net/connectGoogleForm'
+
+# A) raw API Form ID (from edit URL)
+curl -sS -X POST "$CF_URL" \
+  -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
+  -d '{"formIdOrUrl":"PASTE_API_FORM_ID"}'
+
+# B) edit URL
+curl -sS -X POST "$CF_URL" \
+  -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
+  -d '{"formIdOrUrl":"https://docs.google.com/forms/d/PASTE_API_FORM_ID/edit"}'
+
+# C) public URL (expect possible FORM_NOT_FOUND — no conversion layer)
+curl -sS -X POST "$CF_URL" \
+  -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
+  -d '{"formIdOrUrl":"https://docs.google.com/forms/d/e/PASTE_PUBLIC_ID/viewform"}'
+
+# Then inspect Firestore: googleFormConfigs/{googleFormId}
+# Confirm questionMappings[].mappingStatus === "UNMAPPED", watch === null
+```
