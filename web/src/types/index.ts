@@ -3,6 +3,11 @@
 // TypeScript 型別定義
 // ============================================
 
+export type {
+  GoogleFormConfig,
+  UnicornGoogleSubmission,
+} from './google-forms'
+
 // ============================================
 // 🦄 UNICORN: Superuser Emails
 // ============================================

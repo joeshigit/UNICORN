@@ -2854,3 +2854,8 @@ export const seedModuleActionOptionSets = functions
       }
     })
   })
+
+// ============================================
+// 🦄 PHASE 1: Google Forms read-only connection
+// ============================================
+export { connectGoogleForm } from './googleForms/config'
