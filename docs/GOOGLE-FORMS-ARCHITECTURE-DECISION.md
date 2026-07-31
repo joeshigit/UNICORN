@@ -324,9 +324,9 @@ If renew returns `NOT_FOUND` (expired): set `watchHealth = 'WATCH_RENEWAL_ERROR'
 
 - Forms REST API does **not** expose public `entry.*` prefill parameter ids.
 - Prefill extraction is **unofficial**: parse public `viewform` HTML for `FB_PUBLIC_LOAD_DATA_`.
-- Isolate behind **one** replaceable service (planned path after sign-off):  
+- Isolate behind **one** replaceable service:  
   `functions/src/googleForms/prefillEntryExtractor.ts`  
-  (implementation file only after Phase 8 / prefill sign-off — logic frozen here in Phase 0).
+  (implemented in Phase 1.5 Prefill POC; later Copy & Resubmit / Answer Workspace reuse this file only).
 
 ### 4.2 Exact fetch target
 
@@ -498,4 +498,5 @@ function buildPrefillUrl(
 - Prefill runtime service
 - Phase 1.5+ feature code without explicit human approval
 
-**Phase 1 gate correction:** document aligned to Option B. STOP before Phase 1.5.
+**Phase 1 gate correction:** document aligned to Option B.  
+**Phase 1.5:** Prefill POC implementation path = `functions/src/googleForms/prefillEntryExtractor.ts` (see `docs/GOOGLE-FORMS-PHASE1.5-PREFILL-POC.md`). STOP before Answer Workspace / ingest.
